@@ -63,7 +63,7 @@ class Game {
     async init() {
         // 1. Init Physics
         await this.physics.init();
-        document.getElementById('loading').style.display = 'none';
+        // document.getElementById('loading').style.display = 'none'; // Old loader
 
         // 2. Setup Scene
         this.scene = new GameScene(this.physics);
@@ -84,8 +84,29 @@ class Game {
     }
 
     async onCarSelect(carId) {
+        // Show Loading Overlay
+        const overlay = document.getElementById('loading-overlay');
+        const bar = document.getElementById('progress-bar');
+        const text = document.getElementById('loading-text');
+        
+        if (overlay) {
+            overlay.style.display = 'flex';
+            bar.style.width = '0%';
+            text.textContent = 'Loading Car Model...';
+        }
+
         // Load Visual Model
-        const model = await this.loader.loadCarModel(carId);
+        const model = await this.loader.loadCarModel(carId, (percent) => {
+            if (bar) bar.style.width = `${percent}%`;
+        });
+        
+        if (overlay) {
+            // Small delay to show 100%
+            setTimeout(() => {
+                overlay.style.display = 'none';
+            }, 200);
+        }
+
         if (!model) return;
 
         this.visual.setModel(model);
@@ -96,10 +117,13 @@ class Game {
             this.vehicle.chassisBody.setTranslation({ x: 0, y: 2.0, z: 0 }, true);
             this.vehicle.chassisBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
             this.vehicle.chassisBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+            // Reset rotation to face +Z (Identity)
             this.vehicle.chassisBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
         } else {
             // Create Physics Vehicle
             this.vehicle = new VehiclePhysics(this.physics, { x: 0, y: 2.0, z: 0 });
+            // Reset rotation to face +Z (Identity)
+            this.vehicle.chassisBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
         }
     }
 
@@ -120,6 +144,7 @@ class Game {
         if (toStart) {
             // Reset to Start Position (High enough to drop safely)
             body.setTranslation({ x: 0, y: 3.0, z: 0 }, true);
+            // Reset rotation to face +Z (Identity)
             body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
         } else {
             // Flip Upright at current position

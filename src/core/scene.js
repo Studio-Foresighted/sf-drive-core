@@ -69,7 +69,8 @@ export class GameScene {
         this.physicsWorld.createCollider(groundColliderDesc, groundBody);
 
         // 3. Ramp
-        this.createRamp(new THREE.Vector3(0, 0, -50));
+        // Further away (100)
+        this.createRamp(new THREE.Vector3(0, 0, 100));
     }
 
 
@@ -96,19 +97,22 @@ export class GameScene {
         const mat = new THREE.MeshStandardMaterial({ color: 0xcc5500 });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.copy(pos);
-        // Make the ramp steeper: increase slope angle (radians)
-        mesh.rotation.x = -0.6; // Slope (~34°)
+        
+        // Modified: Less steep (-0.4) and rotated 180 (Math.PI)
+        const slope = -0.4; 
+        const yaw = Math.PI;
+        mesh.rotation.set(slope, yaw, 0);
+
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         this.threeScene.add(mesh);
 
         // Physics
-        // Physics body quaternion must match visual rotation. Use half-angle for quaternion.
-        const theta = -0.6; // same slope angle as visual
-        const half = theta * 0.5;
+        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(slope, yaw, 0));
         const bodyDesc = RAPIER.RigidBodyDesc.fixed()
             .setTranslation(pos.x, pos.y, pos.z)
-            .setRotation({ x: Math.sin(half), y: 0, z: 0, w: Math.cos(half) });
+            .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
+            
         const body = this.physicsWorld.createRigidBody(bodyDesc);
         const colliderDesc = RAPIER.ColliderDesc.cuboid(5, 1, 10);
         this.physicsWorld.createCollider(colliderDesc, body);

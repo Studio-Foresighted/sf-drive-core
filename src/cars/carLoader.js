@@ -27,8 +27,9 @@ export class CarLoader {
         }
     }
 
-    async loadCarModel(id) {
+    async loadCarModel(id, onProgress) {
         if (this.cache.has(id)) {
+            if (onProgress) onProgress(100);
             return this.cache.get(id).clone();
         }
 
@@ -102,7 +103,14 @@ export class CarLoader {
                 // Cache the GLTF scene (wrapper)
                 this.cache.set(id, wrapper);
                 resolve(wrapper.clone());
-            }, undefined, (err) => {
+            }, 
+            (xhr) => {
+                if (onProgress && xhr.total > 0) {
+                    const percent = (xhr.loaded / xhr.total) * 100;
+                    onProgress(percent);
+                }
+            }, 
+            (err) => {
                 console.error(`Error loading car ${entry.file}`, err);
                 reject(err);
             });
