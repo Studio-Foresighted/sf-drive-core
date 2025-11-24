@@ -57,6 +57,10 @@ export class VehiclePhysics {
 
         this.createChassis(startPos);
         this.createVehicleController();
+        
+        this.wasGrounded = true;
+        this.landingGraceTimer = 0;
+        this.preLandingSpeed = 0;
     }
 
     createChassis(pos) {
@@ -70,13 +74,12 @@ export class VehiclePhysics {
         this.chassisBody = this.world.createRigidBody(rigidBodyDesc);
 
         // 2. Create Collider
-        // Box shape approx car size (2m wide, 1m high, 4.5m long)
-        // We offset the collider UP relative to the body origin, 
-        // effectively pushing the Center of Mass DOWN relative to the visual mesh.
-        const colliderDesc = RAPIER.ColliderDesc.cuboid(1.0, 0.4, 2.2)
+        // Box shape approx car size (2m wide, 0.6m high, 4.5m long)
+        // Reduced height (0.4 -> 0.3 half-extent) to prevent ground scraping on suspension compression
+        const colliderDesc = RAPIER.ColliderDesc.cuboid(1.0, 0.3, 2.2)
             .setTranslation(this.tuning.chassisCOM.x, this.tuning.chassisCOM.y + 0.5, this.tuning.chassisCOM.z) 
             .setMass(this.tuning.chassisMass)
-            .setFriction(0.5);
+            .setFriction(0.0); // Zero friction on chassis to prevent "grabbing" the ground if it bottoms out
         
         this.world.createCollider(colliderDesc, this.chassisBody);
     }
@@ -119,6 +122,11 @@ export class VehiclePhysics {
     update(dt, input) {
         if (!this.controller) return;
 
+        // 1. Update Timers
+        if (this.landingGraceTimer > 0) {
+            this.landingGraceTimer -= dt;
+        }
+
         const speed = this.controller.currentVehicleSpeed(); // m/s
         const speedKmh = speed * 3.6;
         const fwdSpeed = Math.abs(speed);
@@ -156,13 +164,58 @@ export class VehiclePhysics {
         let engineForce = 0;
         let brakeForce = 0;
 
+        // Check if grounded (any wheel touching)
+        let isGrounded = false;
+        const numWheels = this.controller.numWheels();
+        for (let i = 0; i < numWheels; i++) {
+            if (this.controller.wheelIsInContact(i)) {
+                isGrounded = true;
+                break;
+            }
+        }
+
+        // AIRBORNE LOGIC: Cache Speed
+        if (!isGrounded) {
+             // Cache signed forward speed while in air
+             this.preLandingSpeed = this.controller.currentVehicleSpeed();
+        }
+
+        // LANDING LOGIC: Detect transition from Air -> Ground
+        if (!this.wasGrounded && isGrounded) {
+            this.landingGraceTimer = 0.35; // 350ms grace window
+            const preSpeedKmh = this.preLandingSpeed * 3.6;
+            console.log(`[LANDING] Impact. Pre-speed: ${preSpeedKmh.toFixed(1)} km/h`);
+            
+            // Optional: Keep small kick for initial contact
+            // Use absolute speed for kick magnitude calculation
+            const absSpeed = Math.abs(this.preLandingSpeed);
+            if (absSpeed > 5.0) {
+                const rot = this.chassisBody.rotation();
+                const q = new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w);
+                const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+                
+                // Kick in the direction of travel (sign of preLandingSpeed)
+                const sign = Math.sign(this.preLandingSpeed);
+                const kickFactor = 0.2; 
+                const impulseMag = absSpeed * this.tuning.chassisMass * kickFactor * sign;
+                
+                this.chassisBody.applyImpulse({ x: fwd.x * impulseMag, y: 0, z: fwd.z * impulseMag }, true);
+            }
+        } else if (this.wasGrounded && !isGrounded) {
+            console.log(`[AIRBORNE] Speed: ${speedKmh.toFixed(1)} km/h`);
+        }
+        this.wasGrounded = isGrounded;
+
+        const isGracePeriod = (this.landingGraceTimer > 0 && isGrounded && input.throttle > 0.05);
+
         if (input.throttle !== 0) {
             // Accelerating / Reversing
             // Invert throttle because Rapier vehicle forward might be -Z
             engineForce = -input.throttle * this.tuning.maxEngineForce;
             
             // Top Speed Limiter (Soft Cut)
-            if (speedKmh > this.tuning.topSpeed) {
+            // SKIP if in grace period to prevent power cut on landing
+            if (!isGracePeriod && speedKmh > this.tuning.topSpeed) {
                 // If going faster than top speed, cut engine force smoothly
                 const excess = speedKmh - this.tuning.topSpeed;
                 // Reduce force by 10% per km/h over limit
@@ -174,14 +227,55 @@ export class VehiclePhysics {
         } else {
             // Coasting
             engineForce = 0;
-            // Apply small "rolling resistance" brake
-            brakeForce = this.tuning.maxBrakeForce * this.tuning.coastingBrakeFactor;
+            
+            if (isGrounded) {
+                // Normal coasting on ground
+                brakeForce = this.tuning.maxBrakeForce * this.tuning.coastingBrakeFactor;
+            } else {
+                // In Air: No braking! Let wheels spin to preserve momentum on landing
+                brakeForce = 0;
+            }
         }
 
         // Manual Brake Override
         if (input.brake) {
             brakeForce = this.tuning.maxBrakeForce;
             engineForce = 0;
+        }
+
+        // GRACE PERIOD OVERRIDES
+        if (isGracePeriod) {
+            // Force brake to 0 to prevent landing friction slowdown
+            brakeForce = 0;
+            
+            // Velocity Clamp / Restoration
+            // If we are significantly slower than pre-landing speed, boost us.
+            // Threshold: 10 km/h (~2.7 m/s) to avoid boosting when stopped
+            const preSpeedMag = Math.abs(this.preLandingSpeed);
+            const curSpeedMag = Math.abs(speed); // speed is signed m/s from controller
+
+            if (preSpeedMag > 2.7) {
+                const minMag = preSpeedMag * 0.8;
+                if (curSpeedMag < minMag) {
+                    // We lost too much speed! Apply correction.
+                    const linvel = this.chassisBody.linvel();
+                    const rot = this.chassisBody.rotation();
+                    const q = new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w);
+                    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+                    
+                    // Restore speed in the original direction
+                    const sign = Math.sign(this.preLandingSpeed);
+                    const targetSpeed = sign * minMag;
+
+                    // New Velocity
+                    const newVel = fwd.clone().multiplyScalar(targetSpeed);
+                    newVel.y = linvel.y; // Keep vertical velocity (gravity/bounce)
+                    
+                    this.chassisBody.setLinvel({ x: newVel.x, y: newVel.y, z: newVel.z }, true);
+                    
+                    console.log(`[LANDING CLAMP] Boosted ${speedKmh.toFixed(1)} -> ${(targetSpeed*3.6).toFixed(1)} km/h`);
+                }
+            }
         }
 
         // Apply to Rear Wheels (RWD)
