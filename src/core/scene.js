@@ -31,6 +31,11 @@ export class GameScene {
         dirLight.shadow.mapSize.width = 4096; // Better shadows
         dirLight.shadow.mapSize.height = 4096;
         this.threeScene.add(dirLight);
+
+        // Fill Light (Opposite side)
+        const fillLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        fillLight.position.set(-50, 50, -50);
+        this.threeScene.add(fillLight);
     }
 
     setupTrack() {
