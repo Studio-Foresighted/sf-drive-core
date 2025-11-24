@@ -78,97 +78,183 @@ export class PauseMenu {
         this.uiContainer.id = 'pause-menu';
         this.uiContainer.style.cssText = `
             display: none;
-            position: absolute;
+            position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.85);
-            color: white;
-            font-family: sans-serif;
+            background: rgba(5, 5, 5, 0.9);
+            color: #ecf0f1;
+            font-family: 'Courier New', Courier, monospace;
             z-index: 1000;
             flex-direction: column;
             align-items: center;
             justify-content: center;
+            user-select: none;
+        `;
+
+        // --- MAIN MENU VIEW ---
+        this.mainMenu = document.createElement('div');
+        this.mainMenu.style.cssText = `
+            display: flex; flex-direction: column; align-items: center; width: 100%; height: 100%; justify-content: center; position: relative;
         `;
 
         // Title
         const title = document.createElement('h1');
-        title.innerText = 'PAUSED - Car Tuning';
-        title.style.marginBottom = '20px';
-        this.uiContainer.appendChild(title);
+        title.innerText = 'PAUSED';
+        title.style.cssText = `
+            font-size: 4rem; margin: 0 0 20px 0; letter-spacing: 10px; text-shadow: 4px 4px 0px #000; color: #fff;
+        `;
+        this.mainMenu.appendChild(title);
 
-        // Form Container
-        const form = document.createElement('div');
-        form.style.cssText = `
-            background: #222;
-            padding: 20px;
-            border-radius: 10px;
-            border: 1px solid #444;
-            max-height: 80vh;
-            overflow-y: auto;
-            width: 500px;
+        // Keybindings
+        const keysContainer = document.createElement('div');
+        keysContainer.style.cssText = `
+            background: rgba(0,0,0,0.5); padding: 20px; border: 1px solid #444; margin-bottom: 30px; text-align: center;
+        `;
+        keysContainer.innerHTML = `
+            <div style="margin-bottom: 10px; color: #f1c40f; letter-spacing: 2px;">CONTROLS</div>
+            <div style="display: grid; grid-template-columns: 100px 1fr; gap: 10px; text-align: left; font-size: 1.1rem;">
+                <span style="color: #888;">WASD</span> <span>FORWARD / BACK / STEER</span>
+                <span style="color: #888;">SPACE</span> <span>BRAKE</span>
+                <span style="color: #888;">R</span> <span>RESET CAR</span>
+                <span style="color: #888;">P</span> <span>RESET TO START</span>
+            </div>
+        `;
+        this.mainMenu.appendChild(keysContainer);
+
+        // Buttons
+        const btnStyle = `
+            padding: 15px 40px; font-size: 1.2rem; background: transparent; color: #f1c40f;
+            border: 2px solid #f1c40f; font-family: inherit; cursor: pointer; text-transform: uppercase;
+            letter-spacing: 2px; margin: 10px; transition: all 0.2s; width: 250px;
         `;
 
-        // Generate Inputs
+        const settingsBtn = document.createElement('button');
+        settingsBtn.innerText = 'CAR SETTINGS';
+        settingsBtn.style.cssText = btnStyle;
+        settingsBtn.onmouseover = () => { settingsBtn.style.background = '#f1c40f'; settingsBtn.style.color = '#000'; };
+        settingsBtn.onmouseout = () => { settingsBtn.style.background = 'transparent'; settingsBtn.style.color = '#f1c40f'; };
+        settingsBtn.onclick = () => this.showSettings();
+        this.mainMenu.appendChild(settingsBtn);
+
+        const resumeBtn = document.createElement('button');
+        resumeBtn.innerText = 'RESUME';
+        resumeBtn.style.cssText = btnStyle;
+        resumeBtn.onmouseover = () => { resumeBtn.style.background = '#f1c40f'; resumeBtn.style.color = '#000'; };
+        resumeBtn.onmouseout = () => { resumeBtn.style.background = 'transparent'; resumeBtn.style.color = '#f1c40f'; };
+        resumeBtn.onclick = () => this.toggle();
+        this.mainMenu.appendChild(resumeBtn);
+
+        // --- TUTORIAL OVERLAYS (Arrows) ---
+        // Top Left Arrow (Garage)
+        const tlArrow = document.createElement('div');
+        tlArrow.style.cssText = `
+            position: absolute; top: 180px; left: 60px; display: flex; align-items: flex-start;
+        `;
+        tlArrow.innerHTML = `
+            <div style="font-size: 80px; color: #f1c40f; transform: rotate(-45deg); margin-right: 20px; line-height: 60px;">&uarr;</div>
+            <div style="max-width: 300px; text-align: left;">
+                <div style="color: #f1c40f; font-weight: bold; margin-bottom: 5px; font-size: 1.5rem;">GARAGE</div>
+                <div style="font-size: 1.2rem; color: #ccc;">CHANGE CAR / VIEW MODEL</div>
+            </div>
+        `;
+        this.mainMenu.appendChild(tlArrow);
+
+        // Bottom Right Arrow (HUD)
+        const brArrow = document.createElement('div');
+        brArrow.style.cssText = `
+            position: absolute; bottom: 150px; right: 60px; display: flex; align-items: flex-end; flex-direction: column;
+        `;
+        brArrow.innerHTML = `
+            <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                <div style="max-width: 300px; text-align: right; margin-right: 20px;">
+                    <div style="color: #f1c40f; font-weight: bold; margin-bottom: 5px; font-size: 1.5rem;">DASHBOARD</div>
+                    <div style="font-size: 1.2rem; color: #ccc;">SPEEDOMETER & COLOR PALETTE</div>
+                </div>
+                <div style="font-size: 80px; color: #f1c40f; transform: rotate(45deg); line-height: 60px;">&darr;</div>
+            </div>
+        `;
+        this.mainMenu.appendChild(brArrow);
+
+        this.uiContainer.appendChild(this.mainMenu);
+
+        // --- SETTINGS MENU VIEW ---
+        this.settingsMenu = document.createElement('div');
+        this.settingsMenu.style.cssText = `
+            display: none; flex-direction: column; align-items: center; width: 100%; height: 100%; justify-content: center;
+        `;
+
+        const settingsTitle = document.createElement('h2');
+        settingsTitle.innerText = 'TUNING';
+        settingsTitle.style.cssText = `
+            font-size: 2.5rem; margin-bottom: 20px; letter-spacing: 5px; color: #f1c40f;
+        `;
+        this.settingsMenu.appendChild(settingsTitle);
+
+        // Form Container (Scrollable)
+        const form = document.createElement('div');
+        form.style.cssText = `
+            background: rgba(0,0,0,0.5); padding: 20px; border: 1px solid #444;
+            max-height: 60vh; overflow-y: auto; width: 500px; margin-bottom: 20px;
+        `;
+
         this.params.forEach(p => {
             const row = document.createElement('div');
-            row.style.cssText = 'margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between;';
-
-            // Label + Info
-            const labelGroup = document.createElement('div');
-            labelGroup.style.display = 'flex';
-            labelGroup.style.alignItems = 'center';
+            row.style.marginBottom = '15px';
+            
+            const labelRow = document.createElement('div');
+            labelRow.style.display = 'flex';
+            labelRow.style.justifyContent = 'space-between';
+            labelRow.style.marginBottom = '5px';
             
             const label = document.createElement('label');
             label.innerText = p.label;
+            label.style.color = '#ecf0f1';
             label.style.fontWeight = 'bold';
-            label.style.marginRight = '10px';
-
-            // Info Icon with Tooltip
-            const info = document.createElement('span');
-            info.innerText = 'ⓘ';
-            info.style.cssText = 'cursor: help; color: #00aaff; font-size: 14px; position: relative;';
-            info.title = p.desc; // Native tooltip for simplicity
-
-            labelGroup.appendChild(label);
-            labelGroup.appendChild(info);
-
-            // Input
-            const input = document.createElement('input');
-            input.type = 'number';
-            input.step = '0.1';
-            input.id = `input-${p.key}`;
-            input.value = p.defaultValue; // Set default initially
-            input.style.cssText = 'width: 80px; padding: 5px; background: #333; color: white; border: 1px solid #555;';
             
-            row.appendChild(labelGroup);
+            const valDisplay = document.createElement('span');
+            valDisplay.innerText = p.defaultValue;
+            valDisplay.style.color = '#f1c40f';
+            
+            labelRow.appendChild(label);
+            labelRow.appendChild(valDisplay);
+            row.appendChild(labelRow);
+
+            const input = document.createElement('input');
+            input.type = 'range';
+            input.id = `input-${p.key}`;
+            input.min = p.min;
+            input.max = p.max;
+            input.step = (p.max - p.min) / 100;
+            input.value = p.defaultValue;
+            input.style.width = '100%';
+            input.style.accentColor = '#f1c40f'; // Modern browser support
+            
+            input.oninput = (e) => {
+                const val = parseFloat(e.target.value);
+                valDisplay.innerText = val.toFixed(2);
+                this.updatePhysics(p.key, val);
+            };
+
+            const desc = document.createElement('div');
+            desc.innerText = p.desc;
+            desc.style.fontSize = '0.8rem';
+            desc.style.color = '#888';
+            desc.style.marginTop = '2px';
+
             row.appendChild(input);
+            row.appendChild(desc);
             form.appendChild(row);
         });
+        this.settingsMenu.appendChild(form);
 
-        // Buttons
-        const btnRow = document.createElement('div');
-        btnRow.style.cssText = 'margin-top: 20px; display: flex; justify-content: space-between;';
+        const backBtn = document.createElement('button');
+        backBtn.innerText = 'BACK';
+        backBtn.style.cssText = btnStyle;
+        backBtn.onmouseover = () => { backBtn.style.background = '#f1c40f'; backBtn.style.color = '#000'; };
+        backBtn.onmouseout = () => { backBtn.style.background = 'transparent'; backBtn.style.color = '#f1c40f'; };
+        backBtn.onclick = () => this.showMain();
+        this.settingsMenu.appendChild(backBtn);
 
-        const applyBtn = document.createElement('button');
-        applyBtn.innerText = 'Apply Changes';
-        applyBtn.style.cssText = 'padding: 10px 20px; background: #28a745; color: white; border: none; cursor: pointer; font-weight: bold;';
-        applyBtn.onclick = () => this.applySettings();
-
-        const defaultBtn = document.createElement('button');
-        defaultBtn.innerText = 'Reset Defaults';
-        defaultBtn.style.cssText = 'padding: 10px 20px; background: #dc3545; color: white; border: none; cursor: pointer;';
-        defaultBtn.onclick = () => this.resetDefaults();
-
-        const closeBtn = document.createElement('button');
-        closeBtn.innerText = 'Resume (ESC)';
-        closeBtn.style.cssText = 'padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer;';
-        closeBtn.onclick = () => this.toggle();
-
-        btnRow.appendChild(defaultBtn);
-        btnRow.appendChild(applyBtn);
-        btnRow.appendChild(closeBtn);
-        form.appendChild(btnRow);
-
-        this.uiContainer.appendChild(form);
+        this.uiContainer.appendChild(this.settingsMenu);
         document.body.appendChild(this.uiContainer);
     }
 
@@ -180,6 +266,12 @@ export class PauseMenu {
                 this.toggle();
             }
         });
+    }
+
+    updatePhysics(key, value) {
+        if (this.game.vehicle) {
+            this.game.vehicle.updateTuning({ [key]: value });
+        }
     }
 
     toggle() {
@@ -232,5 +324,15 @@ export class PauseMenu {
         }
         // Reload values (will pick up defaults if vehicle reset worked, or static defaults if no vehicle)
         this.loadCurrentValues();
+    }
+
+    showSettings() {
+        this.mainMenu.style.display = 'none';
+        this.settingsMenu.style.display = 'flex';
+    }
+
+    showMain() {
+        this.settingsMenu.style.display = 'none';
+        this.mainMenu.style.display = 'flex';
     }
 }
