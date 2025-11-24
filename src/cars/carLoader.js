@@ -102,12 +102,24 @@ export class CarLoader {
 
                 // Cache the GLTF scene (wrapper)
                 this.cache.set(id, wrapper);
+                
+                // Ensure we report 100% completion
+                if (onProgress) onProgress(100);
+                
                 resolve(wrapper.clone());
             }, 
             (xhr) => {
-                if (onProgress && xhr.total > 0) {
-                    const percent = (xhr.loaded / xhr.total) * 100;
-                    onProgress(percent);
+                if (onProgress) {
+                    if (xhr.total > 0) {
+                        const percent = (xhr.loaded / xhr.total) * 100;
+                        onProgress(percent);
+                    } else {
+                        // Fallback for servers not sending Content-Length (e.g. Netlify gzip)
+                        // Estimate based on typical car size (~5MB) to show some movement
+                        const estimatedTotal = 5 * 1024 * 1024; 
+                        const percent = Math.min(99, (xhr.loaded / estimatedTotal) * 100);
+                        onProgress(percent);
+                    }
                 }
             }, 
             (err) => {
