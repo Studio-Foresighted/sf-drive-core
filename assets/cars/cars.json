@@ -1,0 +1,5 @@
+[
+  { "id": "rally_car", "file": "lass-rallycar.glb", "displayName": "Rally Car", "rotation": 0 },
+  { "id": "ferrari", "file": "ferrari.glb", "displayName": "Ferrari 458", "rotation": 3.14159 },
+  { "id": "retro_red", "file": "retro_red.glb", "displayName": "Retro Red", "rotation": 3.14159 }
+]

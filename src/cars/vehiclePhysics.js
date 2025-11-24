@@ -1,0 +1,241 @@
+import RAPIER from '@dimforge/rapier3d-compat';
+import * as THREE from 'three';
+
+export class VehiclePhysics {
+    constructor(physicsWorld, startPos) {
+        this.world = physicsWorld.world;
+        this.controller = null;
+        this.chassisBody = null;
+        
+        // ==================================================
+        // TUNING PARAMETERS
+        // ==================================================
+        this.tuning = {
+            // Chassis
+            chassisMass: 1500,
+            // COM Offset: Lowering this keeps the car from rolling over.
+            // (0, -0.5, 0) effectively puts the weight below the axles.
+            chassisCOM: { x: 0, y: -0.5, z: 0 }, 
+            
+            // Suspension
+            // Stiff enough to hold up, soft enough to not jitter.
+            suspensionStiffness: 40.0,
+            suspensionCompression: 2.5,
+            suspensionDamping: 2.5,
+            suspensionRestLength: 0.4,
+            maxSuspensionTravel: 0.3,
+            
+            // Grip / Friction
+            // FrictionSlip: Forward traction.
+            // SideFriction: Lateral grip. Lower = drift, Higher = rail.
+            frictionSlip: 3.0, 
+            sideFriction: 4.0, // Moderate-High for arcade grip
+
+            // Steering
+            maxSteerAngle: 0.6, // ~35 degrees (base max)
+            // Speed-dependent steering reduction. We'll use two values:
+            // - speedSteerFactorAccel: when the player is holding throttle (gentle steering at speed)
+            // - speedSteerFactorCoast: when off-throttle (more responsive)
+            speedSteerFactorAccel: 0.04, // stronger reduction when accelerating
+            speedSteerFactorCoast: 0.01, // less reduction when coasting/braking
+            // High-speed cap: smoothly reduce max steer angle between two speeds (m/s)
+            highSpeedSteerStart: 20.0, // start reducing at ~72 km/h
+            highSpeedSteerEnd: 33.33,  // fully reduced by ~120 km/h
+            highSpeedSteerMinAngle: 0.25, // radians, minimum allowed steer at high speed
+
+            // Engine / Brakes
+            maxEngineForce: 18000, // Reverted to stable value (slightly boosted from 15k)
+            maxBrakeForce: 3000,
+            topSpeed: 150, // km/h - Increased default limit
+            // Coasting: Brake force applied when throttle is 0
+            coastingBrakeFactor: 0.03, // 3% of max brake (almost zero)
+            
+            // Damping (Air resistance / Rolling resistance)
+            linearDamping: 0.15, // Low damping allows high speed without massive force
+            angularDamping: 0.5,
+        };
+
+        this.createChassis(startPos);
+        this.createVehicleController();
+    }
+
+    createChassis(pos) {
+        // 1. Create RigidBody
+        const rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(pos.x, pos.y, pos.z)
+            .setLinearDamping(this.tuning.linearDamping)
+            .setAngularDamping(this.tuning.angularDamping)
+            .setCanSleep(false);
+        
+        this.chassisBody = this.world.createRigidBody(rigidBodyDesc);
+
+        // 2. Create Collider
+        // Box shape approx car size (2m wide, 1m high, 4.5m long)
+        // We offset the collider UP relative to the body origin, 
+        // effectively pushing the Center of Mass DOWN relative to the visual mesh.
+        const colliderDesc = RAPIER.ColliderDesc.cuboid(1.0, 0.4, 2.2)
+            .setTranslation(this.tuning.chassisCOM.x, this.tuning.chassisCOM.y + 0.5, this.tuning.chassisCOM.z) 
+            .setMass(this.tuning.chassisMass)
+            .setFriction(0.5);
+        
+        this.world.createCollider(colliderDesc, this.chassisBody);
+    }
+
+    createVehicleController() {
+        this.controller = this.world.createVehicleController(this.chassisBody);
+
+        // Wheel Configuration
+        const wheelRadius = 0.35;
+        const wheelDir = new RAPIER.Vector3(0, -1, 0);
+        const wheelAxle = new RAPIER.Vector3(1, 0, 0);
+        
+        // Wheel Offsets (Wider track = more stability)
+        const xOff = 1.0; 
+        const yOff = 0.1; // Mount point relative to chassis center
+        const zOff = 1.4;
+
+        // Add 4 Wheels
+        // FL, FR, RL, RR
+        this.addWheel({ x: xOff, y: yOff, z: -zOff }, wheelRadius, wheelDir, wheelAxle);
+        this.addWheel({ x: -xOff, y: yOff, z: -zOff }, wheelRadius, wheelDir, wheelAxle);
+        this.addWheel({ x: xOff, y: yOff, z: zOff }, wheelRadius, wheelDir, wheelAxle);
+        this.addWheel({ x: -xOff, y: yOff, z: zOff }, wheelRadius, wheelDir, wheelAxle);
+    }
+
+    addWheel(pos, radius, dir, axle) {
+        this.controller.addWheel(pos, dir, axle, this.tuning.suspensionRestLength, radius);
+        const i = this.controller.numWheels() - 1;
+        
+        // Apply Initial Tuning
+        this.controller.setWheelSuspensionStiffness(i, this.tuning.suspensionStiffness);
+        this.controller.setWheelMaxSuspensionTravel(i, this.tuning.maxSuspensionTravel);
+        this.controller.setWheelSuspensionCompression(i, this.tuning.suspensionCompression);
+        this.controller.setWheelSuspensionRelaxation(i, this.tuning.suspensionDamping);
+        this.controller.setWheelFrictionSlip(i, this.tuning.frictionSlip);
+        // Note: Side friction might need custom handling if Rapier JS doesn't expose it directly on the controller yet,
+        // but we assume standard friction covers it for now or use the frictionSlip.
+    }
+
+    update(dt, input) {
+        if (!this.controller) return;
+
+        const speed = this.controller.currentVehicleSpeed(); // m/s
+        const speedKmh = speed * 3.6;
+        const fwdSpeed = Math.abs(speed);
+
+        // ==================================================
+        // 1. STEERING (Speed Dependent)
+        // ==================================================
+        // Reduce steering based on speed AND throttle state.
+        // Choose speedSteerFactor depending on whether the user is holding throttle.
+        const isAccelerating = (input.throttle > 0.05);
+        const speedSteerFactor = isAccelerating ? this.tuning.speedSteerFactorAccel : this.tuning.speedSteerFactorCoast;
+
+        // steerFactor scales 0..1 (1 at zero speed). Higher factor => more reduction with speed.
+        const steerFactor = 1.0 / (1.0 + fwdSpeed * speedSteerFactor);
+
+        // High-speed smooth cap: lerp maxSteerAngle -> highSpeedSteerMinAngle between start/end speeds
+        let maxSteer = this.tuning.maxSteerAngle;
+        const sStart = this.tuning.highSpeedSteerStart;
+        const sEnd = Math.max(this.tuning.highSpeedSteerEnd, sStart + 0.001);
+        if (fwdSpeed > sStart) {
+            const t = Math.min(1.0, (fwdSpeed - sStart) / (sEnd - sStart));
+            // Smoothstep for nicer interpolation
+            const smooth = t * t * (3 - 2 * t);
+            maxSteer = (1 - smooth) * this.tuning.maxSteerAngle + smooth * this.tuning.highSpeedSteerMinAngle;
+        }
+
+        const steerAngle = -input.steering * maxSteer * steerFactor;
+
+        this.controller.setWheelSteering(0, steerAngle);
+        this.controller.setWheelSteering(1, steerAngle);
+
+        // ==================================================
+        // 2. ENGINE & BRAKES (Coasting Logic)
+        // ==================================================
+        let engineForce = 0;
+        let brakeForce = 0;
+
+        if (input.throttle !== 0) {
+            // Accelerating / Reversing
+            // Invert throttle because Rapier vehicle forward might be -Z
+            engineForce = -input.throttle * this.tuning.maxEngineForce;
+            
+            // Top Speed Limiter (Soft Cut)
+            if (speedKmh > this.tuning.topSpeed) {
+                // If going faster than top speed, cut engine force smoothly
+                const excess = speedKmh - this.tuning.topSpeed;
+                // Reduce force by 10% per km/h over limit
+                const reduction = Math.min(1.0, excess * 0.1); 
+                engineForce *= (1.0 - reduction);
+            }
+
+            brakeForce = 0;
+        } else {
+            // Coasting
+            engineForce = 0;
+            // Apply small "rolling resistance" brake
+            brakeForce = this.tuning.maxBrakeForce * this.tuning.coastingBrakeFactor;
+        }
+
+        // Manual Brake Override
+        if (input.brake) {
+            brakeForce = this.tuning.maxBrakeForce;
+            engineForce = 0;
+        }
+
+        // Apply to Rear Wheels (RWD)
+        this.controller.setWheelEngineForce(2, engineForce);
+        this.controller.setWheelEngineForce(3, engineForce);
+
+        // Apply Brakes to All Wheels
+        for (let i = 0; i < 4; i++) {
+            this.controller.setWheelBrake(i, brakeForce);
+        }
+
+        // ==================================================
+        // 3. STABILITY (Anti-Spin / Yaw Clamp)
+        // ==================================================
+        // Optional: Clamp angular velocity to prevent uncontrollable spins
+        const angVel = this.chassisBody.angvel();
+        const maxYawRate = 2.5; // rad/s
+        if (Math.abs(angVel.y) > maxYawRate) {
+            this.chassisBody.setAngvel({
+                x: angVel.x,
+                y: Math.sign(angVel.y) * maxYawRate,
+                z: angVel.z
+            }, true);
+        }
+        
+        // Step the vehicle controller
+        this.controller.updateVehicle(dt);
+    }
+
+    getPosition() {
+        const t = this.chassisBody.translation();
+        return new THREE.Vector3(t.x, t.y, t.z);
+    }
+
+    getRotation() {
+        const r = this.chassisBody.rotation();
+        return new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    }
+    
+    // Helper for UI Tuning
+    updateTuning(newValues) {
+        this.tuning = { ...this.tuning, ...newValues };
+        // Re-apply wheel params
+        for (let i = 0; i < this.controller.numWheels(); i++) {
+            this.controller.setWheelSuspensionStiffness(i, this.tuning.suspensionStiffness);
+            this.controller.setWheelSuspensionRelaxation(i, this.tuning.suspensionDamping);
+            this.controller.setWheelFrictionSlip(i, this.tuning.frictionSlip);
+        }
+        // Re-apply body params
+        this.chassisBody.setLinearDamping(this.tuning.linearDamping);
+        this.chassisBody.setAngularDamping(this.tuning.angularDamping);
+    }
+    
+    resetTuning() {
+        // Reset logic would go here
+    }
+}

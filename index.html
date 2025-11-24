@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Race 3JS - Prototype</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #garage-ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            color: white;
+            display: none; /* Hidden until loaded */
+        }
+        .car-btn {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 5px;
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            cursor: pointer;
+            text-align: left;
+        }
+        .car-btn:hover { background: #444; }
+        .car-btn.active { background: #007bff; border-color: #0056b3; }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Loading Physics & Assets...</div>
+    
+    <div id="garage-ui">
+        <h3>Select Car</h3>
+        <div id="car-list"></div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                "@dimforge/rapier3d-compat": "https://unpkg.com/@dimforge/rapier3d-compat@0.14.0/rapier.es.js"
+            }
+        }
+    </script>
+
+    <script type="module" src="./src/main.js"></script>
+</body>
+</html>
