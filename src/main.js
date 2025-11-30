@@ -10,6 +10,8 @@ import { GarageUI } from './ui/garage.js';
 import { PauseMenu } from './ui/pauseMenu.js';
 import { HUD } from './ui/hud.js';
 import { Time } from './util/time.js';
+import { LapSystem } from './core/lapSystem.js';
+import { MapEditor } from './ui/mapEditor.js';
 
 // Future Multiplayer: CarState definition
 class CarState {
@@ -53,6 +55,7 @@ class Game {
         this.pauseMenu = null;
         this.hud = null;
         this.paused = false;
+        this.lapSystem = null;
         
         this.localCarState = new CarState();
 
@@ -67,6 +70,11 @@ class Game {
 
         // 2. Setup Scene
         this.scene = new GameScene(this.physics);
+        // Setup Environment Map (Requires Renderer)
+        // this.scene.setEnvironment(this.renderer.renderer); // Reverted as requested
+        
+        await this.scene.loadTrack();
+        
         this.visual = new CarVisual(this.scene.threeScene);
 
         // 3. Setup Garage & Car Loading
@@ -75,11 +83,16 @@ class Game {
 
         // 4. Setup Pause Menu
         this.pauseMenu = new PauseMenu(this);
-
         // 5. Setup HUD
         this.hud = new HUD(this);
 
-        // 6. Start Loop
+        // 6. Setup Lap System
+        this.lapSystem = new LapSystem(this);
+
+        // 7. Setup Map Editor
+        this.mapEditor = new MapEditor(this);
+
+        // 8. Start Loop
         this.renderer.renderer.setAnimationLoop(() => this.update());
     }
 
@@ -117,19 +130,59 @@ class Game {
             this.vehicle.chassisBody.setTranslation({ x: 0, y: 2.0, z: 0 }, true);
             this.vehicle.chassisBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
             this.vehicle.chassisBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-            // Reset rotation to face +Z (Identity)
-            this.vehicle.chassisBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+            
+            // Face Backward (-Z) - Reverted as requested
+            this.vehicle.chassisBody.setRotation({ x: 0, y: 1, z: 0, w: 0 }, true);
         } else {
             // Create Physics Vehicle
             this.vehicle = new VehiclePhysics(this.physics, { x: 0, y: 2.0, z: 0 });
-            // Reset rotation to face +Z (Identity)
-            this.vehicle.chassisBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+            // Face Backward (-Z)
+            this.vehicle.chassisBody.setRotation({ x: 0, y: 1, z: 0, w: 0 }, true);
         }
+
+        // Connect Jump Callback
+        this.vehicle.onJumpCallback = (dist) => {
+            if (this.hud) this.hud.addJump(dist);
+        };
     }
 
     handleInput(key) {
+        // If Map Editor is active, ignore game controls (except maybe toggle editor?)
+        // Actually, MapEditor handles its own input, but we need to prevent 'r' from resetting car
+        if (this.mapEditor && this.mapEditor.active) {
+            return; 
+        }
+
         if (key === 'p') this.resetCar(true);
         if (key === 'r') this.resetCar(false);
+        if (key === '0') {
+            // Fake Jump
+            const dist = 10 + Math.random() * 90; // 10m to 100m
+            if (this.hud) this.hud.addJump(dist);
+        }
+        if (key === 'l') {
+            // Log Position for Checkpoint Setup
+            if (this.vehicle) {
+                const pos = this.vehicle.chassisBody.translation();
+                console.log(`LOG POS: { x: ${pos.x.toFixed(2)}, y: ${pos.y.toFixed(2)}, z: ${pos.z.toFixed(2)} }`);
+            }
+        }
+        if (key === 'b') {
+            // Debug Log Y Positions
+            if (this.vehicle) {
+                const pos = this.vehicle.chassisBody.translation();
+                console.log(`[DEBUG] Car Y: ${pos.y.toFixed(4)}`);
+            }
+            if (this.mapEditor) {
+                console.log(`[DEBUG] Map Editor Objects:`);
+                this.mapEditor.checkpoints.forEach((cp, i) => {
+                    console.log(`  Checkpoint ${i}: Y=${cp.y.toFixed(4)}`);
+                });
+                this.mapEditor.ramps.forEach((r, i) => {
+                    console.log(`  Ramp ${i}: Y=${r.pos.y.toFixed(4)}`);
+                });
+            }
+        }
     }
 
     resetCar(toStart) {
@@ -144,8 +197,8 @@ class Game {
         if (toStart) {
             // Reset to Start Position (High enough to drop safely)
             body.setTranslation({ x: 0, y: 3.0, z: 0 }, true);
-            // Reset rotation to face +Z (Identity)
-            body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+            // Reset rotation to Face Backward (-Z)
+            body.setRotation({ x: 0, y: 1, z: 0, w: 0 }, true);
         } else {
             // Flip Upright at current position
             const t = body.translation();
@@ -164,7 +217,14 @@ class Game {
     update() {
         // Always render scene (even when paused)
         if (this.scene) {
-            this.renderer.render(this.scene.threeScene);
+            // If Map Editor is active, use its camera
+            if (this.mapEditor && this.mapEditor.active) {
+                this.renderer.render(this.scene.threeScene, this.mapEditor.camera);
+                this.mapEditor.update();
+                return; // Skip game logic
+            } else {
+                this.renderer.render(this.scene.threeScene);
+            }
         }
 
         if (this.paused) return;
@@ -188,10 +248,42 @@ class Game {
         if (this.vehicle && this.visual) {
             // In a networked game, we might interpolate between states here.
             // For local, we just use the physics state directly.
+            
+            // Calculate drift power for visuals
+            // Simple approximation: Angle between velocity and forward vector
+            let driftPower = 0;
+            let isDrifting = false;
+            
+            if (this.vehicle.controller) {
+                const speed = this.vehicle.controller.currentVehicleSpeed();
+                if (speed > 5) { // Only drift if moving
+                    // We can check side slip from vehicle controller if available, 
+                    // or just use input + speed as a proxy for now.
+                    // Better: Use the vehicle controller's internal state if exposed.
+                    // For now, let's use a simple heuristic: High speed + Steering = Drift?
+                    // No, that's too simple.
+                    // Let's assume the vehicle physics class handles the "drifting" state logic internally 
+                    // or we just pass 0 for now until we hook up real slip angle.
+                    
+                    // Actually, let's use the side speed vs forward speed ratio
+                    // But we don't have easy access to local velocity here without transforming.
+                    // Let's just pass 0 for now, or maybe random for testing?
+                    // User asked for particles "concise".
+                    // Let's enable it if steering is hard at speed.
+                    if (Math.abs(controlState.steering) > 0.5 && speed > 15) {
+                        isDrifting = true;
+                        driftPower = 1.0;
+                    }
+                }
+            }
+
             this.visual.update(
                 this.localCarState.position, 
                 this.localCarState.rotation, 
-                this.vehicle.controller
+                this.vehicle.controller,
+                dt,
+                isDrifting,
+                driftPower
             );
 
             // 5. Camera Follow
@@ -201,6 +293,11 @@ class Game {
         // 6. Update HUD
         if (this.hud) {
             this.hud.update();
+        }
+
+        // 7. Update Lap System
+        if (this.lapSystem) {
+            this.lapSystem.update();
         }
     }
 

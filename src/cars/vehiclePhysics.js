@@ -48,7 +48,7 @@ export class VehiclePhysics {
             maxBrakeForce: 3000,
             topSpeed: 150, // km/h - Increased default limit
             // Coasting: Brake force applied when throttle is 0
-            coastingBrakeFactor: 0.03, // 3% of max brake (almost zero)
+            coastingBrakeFactor: 0.0, // Default OFF as requested
             
             // Damping (Air resistance / Rolling resistance)
             linearDamping: 0.15, // Low damping allows high speed without massive force
@@ -61,6 +61,10 @@ export class VehiclePhysics {
         this.wasGrounded = true;
         this.landingGraceTimer = 0;
         this.preLandingSpeed = 0;
+
+        // Jump Measurement
+        this.jumpStartPos = new THREE.Vector3();
+        this.onJumpCallback = null;
     }
 
     createChassis(pos) {
@@ -185,6 +189,20 @@ export class VehiclePhysics {
             this.landingGraceTimer = 0.35; // 350ms grace window
             const preSpeedKmh = this.preLandingSpeed * 3.6;
             console.log(`[LANDING] Impact. Pre-speed: ${preSpeedKmh.toFixed(1)} km/h`);
+
+            // --- JUMP MEASUREMENT ---
+            const landPos = this.getPosition();
+            // Calculate flat distance (ignore height diff for fairness)
+            const dist = Math.sqrt(
+                Math.pow(landPos.x - this.jumpStartPos.x, 2) + 
+                Math.pow(landPos.z - this.jumpStartPos.z, 2)
+            );
+            
+            // Only report significant jumps (> 10 meters)
+            if (dist > 10.0 && this.onJumpCallback) {
+                this.onJumpCallback(dist);
+            }
+            // ------------------------
             
             // Optional: Keep small kick for initial contact
             // Use absolute speed for kick magnitude calculation
@@ -202,6 +220,11 @@ export class VehiclePhysics {
                 this.chassisBody.applyImpulse({ x: fwd.x * impulseMag, y: 0, z: fwd.z * impulseMag }, true);
             }
         } else if (this.wasGrounded && !isGrounded) {
+            // --- TAKEOFF TRACKING ---
+            const pos = this.getPosition();
+            this.jumpStartPos.set(pos.x, pos.y, pos.z);
+            // ------------------------
+
             console.log(`[AIRBORNE] Speed: ${speedKmh.toFixed(1)} km/h`);
         }
         this.wasGrounded = isGrounded;
@@ -213,6 +236,12 @@ export class VehiclePhysics {
             // Invert throttle because Rapier vehicle forward might be -Z
             engineForce = -input.throttle * this.tuning.maxEngineForce;
             
+            // Low Speed Boost (0-70 km/h)
+            // Apply 40% extra torque at low speeds for punchier acceleration
+            if (speedKmh < 70 && speedKmh > -20) {
+                engineForce *= 1.4;
+            }
+
             // Top Speed Limiter (Soft Cut)
             // SKIP if in grace period to prevent power cut on landing
             if (!isGracePeriod && speedKmh > this.tuning.topSpeed) {

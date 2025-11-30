@@ -33,7 +33,7 @@ export class Renderer {
         this.renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
-    render(scene) {
-        this.renderer.render(scene, this.camera);
+    render(scene, camera = null) {
+        this.renderer.render(scene, camera || this.camera);
     }
 }

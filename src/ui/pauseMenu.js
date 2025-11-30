@@ -59,12 +59,6 @@ export class PauseMenu {
                 label: 'Top Speed (km/h)', 
                 desc: 'Maximum speed limiter.',
                 min: 50, max: 300, defaultValue: 120
-            },
-            { 
-                key: 'coastingBrakeFactor', 
-                label: 'Coasting Drag', 
-                desc: 'Braking when throttle released (0-1).',
-                min: 0.0, max: 0.5, defaultValue: 0.03
             }
         ];
 
@@ -104,10 +98,16 @@ export class PauseMenu {
         `;
         this.mainMenu.appendChild(title);
 
-        // Keybindings
+        // Content Row (Controls)
+        const contentRow = document.createElement('div');
+        contentRow.style.cssText = `
+            display: flex; flex-direction: row; gap: 20px; align-items: flex-start; margin-bottom: 30px;
+        `;
+
+        // Keybindings (Left)
         const keysContainer = document.createElement('div');
         keysContainer.style.cssText = `
-            background: rgba(0,0,0,0.5); padding: 20px; border: 1px solid #444; margin-bottom: 30px; text-align: center;
+            background: rgba(0,0,0,0.5); padding: 20px; border: 1px solid #444; text-align: center; height: 100%;
         `;
         keysContainer.innerHTML = `
             <div style="margin-bottom: 10px; color: #f1c40f; letter-spacing: 2px;">CONTROLS</div>
@@ -118,7 +118,9 @@ export class PauseMenu {
                 <span style="color: #888;">P</span> <span>RESET TO START</span>
             </div>
         `;
-        this.mainMenu.appendChild(keysContainer);
+        contentRow.appendChild(keysContainer);
+        
+        this.mainMenu.appendChild(contentRow);
 
         // Buttons
         const btnStyle = `
@@ -134,6 +136,18 @@ export class PauseMenu {
         settingsBtn.onmouseout = () => { settingsBtn.style.background = 'transparent'; settingsBtn.style.color = '#f1c40f'; };
         settingsBtn.onclick = () => this.showSettings();
         this.mainMenu.appendChild(settingsBtn);
+
+        const mapEditBtn = document.createElement('button');
+        mapEditBtn.innerText = 'MAP EDITOR';
+        mapEditBtn.style.cssText = btnStyle;
+        mapEditBtn.onmouseover = () => { mapEditBtn.style.background = '#f1c40f'; mapEditBtn.style.color = '#000'; };
+        mapEditBtn.onmouseout = () => { mapEditBtn.style.background = 'transparent'; mapEditBtn.style.color = '#f1c40f'; };
+        mapEditBtn.onclick = () => {
+            if (this.game.mapEditor) {
+                this.game.mapEditor.toggle();
+            }
+        };
+        this.mainMenu.appendChild(mapEditBtn);
 
         const resumeBtn = document.createElement('button');
         resumeBtn.innerText = 'RESUME';
@@ -189,11 +203,17 @@ export class PauseMenu {
         `;
         this.settingsMenu.appendChild(settingsTitle);
 
-        // Form Container (Scrollable)
+        // Settings Content Row (Split View)
+        const settingsContent = document.createElement('div');
+        settingsContent.style.cssText = `
+            display: flex; flex-direction: row; gap: 30px; align-items: flex-start; margin-bottom: 20px;
+        `;
+
+        // 1. Main Tuning Form (Left)
         const form = document.createElement('div');
         form.style.cssText = `
             background: rgba(0,0,0,0.5); padding: 20px; border: 1px solid #444;
-            max-height: 60vh; overflow-y: auto; width: 500px; margin-bottom: 20px;
+            max-height: 60vh; overflow-y: auto; width: 500px;
         `;
 
         this.params.forEach(p => {
@@ -244,7 +264,65 @@ export class PauseMenu {
             row.appendChild(desc);
             form.appendChild(row);
         });
-        this.settingsMenu.appendChild(form);
+        settingsContent.appendChild(form);
+
+        // 2. Stop/Slow Mechanic Panel (Right) - Re-added here
+        const stopSlowContainer = document.createElement('div');
+        stopSlowContainer.style.cssText = `
+            background: rgba(0,0,0,0.5); padding: 20px; border: 1px solid #444; text-align: left; width: 300px;
+        `;
+        
+        stopSlowContainer.innerHTML = `
+            <div style="margin-bottom: 15px; color: #f1c40f; letter-spacing: 2px; text-align: center;">STOP / SLOW MECHANIC</div>
+            
+            <div style="margin-bottom: 10px; display: flex; align-items: center;">
+                <input type="checkbox" id="ss-enable" style="width: 20px; height: 20px; accent-color: #f1c40f; margin-right: 10px;">
+                <label for="ss-enable" style="color: #ecf0f1; cursor: pointer;">Enable Coasting Brake</label>
+            </div>
+
+            <div style="margin-bottom: 5px; color: #ccc; font-size: 0.9rem;">Brake Force (Coasting)</div>
+            <input type="range" id="ss-brake" min="0" max="0.2" step="0.01" value="0.03" style="width: 100%; accent-color: #f1c40f; margin-bottom: 10px;">
+            
+            <div style="margin-bottom: 5px; color: #ccc; font-size: 0.9rem;">Air Resistance (Drag)</div>
+            <input type="range" id="ss-drag" min="0" max="1.0" step="0.05" value="0.15" style="width: 100%; accent-color: #f1c40f; margin-bottom: 15px;">
+
+            <button id="ss-apply" style="
+                width: 100%; padding: 8px; background: #f1c40f; color: #000; border: none; 
+                font-weight: bold; cursor: pointer; text-transform: uppercase; letter-spacing: 1px;
+            ">Apply Changes</button>
+        `;
+        settingsContent.appendChild(stopSlowContainer);
+
+        this.settingsMenu.appendChild(settingsContent);
+
+        // Bind Apply Button Logic
+        setTimeout(() => {
+            const btn = document.getElementById('ss-apply');
+            if (btn) {
+                btn.onclick = () => {
+                    const enabled = document.getElementById('ss-enable').checked;
+                    const brakeVal = parseFloat(document.getElementById('ss-brake').value);
+                    const dragVal = parseFloat(document.getElementById('ss-drag').value);
+                    
+                    const newTuning = {
+                        coastingBrakeFactor: enabled ? brakeVal : 0,
+                        linearDamping: dragVal
+                    };
+                    
+                    if (this.game.vehicle) {
+                        this.game.vehicle.updateTuning(newTuning);
+                        
+                        // Visual Feedback
+                        btn.innerText = "APPLIED!";
+                        btn.style.background = "#2ecc71";
+                        setTimeout(() => {
+                            btn.innerText = "APPLY CHANGES";
+                            btn.style.background = "#f1c40f";
+                        }, 1000);
+                    }
+                };
+            }
+        }, 0);
 
         const backBtn = document.createElement('button');
         backBtn.innerText = 'BACK';
