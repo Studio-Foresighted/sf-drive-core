@@ -39,7 +39,7 @@ export class MapEditor {
     createNotificationUI() {
         this.notification = document.createElement('div');
         this.notification.style.cssText = `
-            position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+            position: fixed; top: 150px; left: 50%; transform: translateX(-50%);
             background: rgba(0,0,0,0.8); color: #00ffcc; padding: 10px 20px;
             border-radius: 5px; font-family: monospace; font-size: 1rem;
             pointer-events: none; opacity: 0; transition: opacity 0.5s; z-index: 2000;
@@ -254,11 +254,9 @@ export class MapEditor {
         yContainer.appendChild(this.yCheckbox);
         controls.appendChild(yContainer);
 
-        // Save/Load/Reset/Download/Upload
+        // Save/Load/Reset
         controls.appendChild(this.createButton('SAVE', () => this.saveMap()));
         controls.appendChild(this.createButton('LOAD', () => this.loadMap()));
-        controls.appendChild(this.createButton('DOWNLOAD', () => this.downloadMap()));
-        controls.appendChild(this.createButton('UPLOAD', () => this.fileInput.click()));
         controls.appendChild(this.createButton('RESET', () => this.resetMap()));
 
         // Exit Button
@@ -299,7 +297,9 @@ export class MapEditor {
     }
 
     rotateRamp() {
-        this.rampRotation += Math.PI / 4; // 45 degrees
+        const deg = 20;
+        const rad = deg * (Math.PI / 180);
+        this.rampRotation += rad; 
         // Normalize to 0..2PI
         this.rampRotation = this.rampRotation % (Math.PI * 2);
         
@@ -528,26 +528,23 @@ export class MapEditor {
         // Save to LocalStorage
         localStorage.setItem('race_game_map', json);
         
-        // Save to Server
-        fetch('/save_map', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: json
-        })
-        .then(response => response.json())
-        .then(result => {
-            if (result.status === 'success') {
-                this.showNotification("Map saved to Server & LocalStorage!");
-            } else {
-                this.showNotification("Saved Local, Server Error: " + result.message);
-            }
-        })
-        .catch(error => {
-            console.error('Error saving map:', error);
-            this.showNotification("Saved Local. Server Offline?");
-        });
+        // Download to Local File
+        try {
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'race_map.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            this.showNotification("Map Saved (Browser & File)");
+        } catch (e) {
+            console.error("File download failed:", e);
+            this.showNotification("Saved to Browser Storage Only");
+        }
     }
 
     loadMap(silent = false) {
