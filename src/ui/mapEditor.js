@@ -254,9 +254,11 @@ export class MapEditor {
         yContainer.appendChild(this.yCheckbox);
         controls.appendChild(yContainer);
 
-        // Save/Load/Reset
+        // Save/Load/Reset/Download/Upload
         controls.appendChild(this.createButton('SAVE', () => this.saveMap()));
         controls.appendChild(this.createButton('LOAD', () => this.loadMap()));
+        controls.appendChild(this.createButton('DOWNLOAD', () => this.downloadMap()));
+        controls.appendChild(this.createButton('UPLOAD', () => this.fileInput.click()));
         controls.appendChild(this.createButton('RESET', () => this.resetMap()));
 
         // Exit Button
@@ -270,6 +272,13 @@ export class MapEditor {
         this.closeBtn.onclick = () => this.toggle();
 
         document.body.appendChild(this.uiOverlay);
+        // Hidden file input for uploads
+        this.fileInput = document.createElement('input');
+        this.fileInput.type = 'file';
+        this.fileInput.accept = '.json,application/json';
+        this.fileInput.style.display = 'none';
+        this.fileInput.onchange = (e) => this.handleFileUpload(e);
+        document.body.appendChild(this.fileInput);
         document.body.appendChild(this.closeBtn);
     }
 
@@ -549,42 +558,89 @@ export class MapEditor {
         }
 
         try {
-            const data = JSON.parse(json);
-            
-            // Clear current
-            this.checkpoints = [];
-            this.ramps = [];
-            this.visuals.forEach(m => this.game.scene.threeScene.remove(m));
-            this.visuals = [];
-            this.rampVisuals.forEach(m => this.game.scene.threeScene.remove(m));
-            this.rampVisuals = [];
-            if (this.lines) this.game.scene.threeScene.remove(this.lines);
-
-            // Load Checkpoints
-            if (data.checkpoints) {
-                data.checkpoints.forEach((p, i) => {
-                    const v = new THREE.Vector3(p.x, p.y, p.z);
-                    this.checkpoints.push(v);
-                    this.addCheckpointVisual(v, i);
-                });
-                this.updateLines();
-            }
-
-            // Load Ramps
-            if (data.ramps) {
-                data.ramps.forEach(r => {
-                    const v = new THREE.Vector3(r.pos.x, r.pos.y, r.pos.z);
-                    const rampData = { pos: v, rotation: r.rotation };
-                    this.ramps.push(rampData);
-                    this.addRampVisual(rampData);
-                });
-            }
-
-            if (!silent) this.showNotification("Map Loaded Successfully.");
+            this.loadFromJSON(json, silent);
         } catch (e) {
             console.error("Failed to load map:", e);
             if (!silent) this.showNotification("Error loading map.");
         }
+    }
+
+    // Load map from a JSON string (used by localStorage or file upload)
+    loadFromJSON(jsonString, silent = false) {
+        const data = JSON.parse(jsonString);
+
+        // Clear current
+        this.checkpoints = [];
+        this.ramps = [];
+        this.visuals.forEach(m => this.game.scene.threeScene.remove(m));
+        this.visuals = [];
+        this.rampVisuals.forEach(m => this.game.scene.threeScene.remove(m));
+        this.rampVisuals = [];
+        if (this.lines) this.game.scene.threeScene.remove(this.lines);
+
+        // Load Checkpoints
+        if (data.checkpoints) {
+            data.checkpoints.forEach((p, i) => {
+                const v = new THREE.Vector3(p.x, p.y, p.z);
+                this.checkpoints.push(v);
+                this.addCheckpointVisual(v, i);
+            });
+            this.updateLines();
+        }
+
+        // Load Ramps
+        if (data.ramps) {
+            data.ramps.forEach(r => {
+                const v = new THREE.Vector3(r.pos.x, r.pos.y, r.pos.z);
+                const rampData = { pos: v, rotation: r.rotation };
+                this.ramps.push(rampData);
+                this.addRampVisual(rampData);
+            });
+        }
+
+        if (!silent) this.showNotification("Map Loaded Successfully.");
+    }
+
+    // Trigger a file download of the current map JSON (works on Netlify/static hosts)
+    downloadMap() {
+        const data = {
+            checkpoints: this.checkpoints,
+            ramps: this.ramps
+        };
+        const json = JSON.stringify(data, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const now = new Date();
+        const ts = now.toISOString().replace(/[:.]/g, '-');
+        a.download = `race_map_${ts}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        this.showNotification('Map downloaded to your machine.');
+    }
+
+    // Handle a user-selected JSON file and load it into the editor
+    handleFileUpload(e) {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            try {
+                const content = evt.target.result;
+                this.loadFromJSON(content, false);
+            } catch (err) {
+                console.error('Failed to parse uploaded map:', err);
+                this.showNotification('Invalid map file.');
+            } finally {
+                // reset input so the same file can be re-selected if needed
+                this.fileInput.value = '';
+            }
+        };
+        reader.readAsText(file);
     }
 
     applyChanges() {
