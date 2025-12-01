@@ -215,12 +215,27 @@ export class MapEditor {
         this.modeBtn = this.createButton('Mode: CHECKPOINT', () => this.toggleMode());
         controls.appendChild(this.modeBtn);
 
+        // Create New Map Button (Prominent)
+        this.createMapBtn = this.createButton('NEW MAP', () => this.addNewMap());
+        this.createMapBtn.style.background = '#00aa00';
+        controls.appendChild(this.createMapBtn);
+
         // Save/Delete/Reset
-        controls.appendChild(this.createButton('SAVE', () => this.saveMap()));
+        this.saveBtn = this.createButton('SAVE', () => this.saveMap());
+        controls.appendChild(this.saveBtn);
+        
         this.deleteBtn = this.createButton('DELETE', () => this.deleteMap());
         this.deleteBtn.style.display = 'none'; // Hidden by default (for Default map)
         controls.appendChild(this.deleteBtn);
-        controls.appendChild(this.createButton('RESET', () => this.resetMap()));
+        
+        this.resetBtn = this.createButton('RESET', () => this.resetMap());
+        controls.appendChild(this.resetBtn);
+
+        // Info Text for Default Map
+        this.infoText = document.createElement('div');
+        this.infoText.style.cssText = 'margin-top: 10px; color: #ccc; font-size: 0.9rem; font-style: italic;';
+        this.infoText.innerText = "Default Map is Read-Only. Create a New Map to Edit.";
+        this.uiOverlay.appendChild(this.infoText);
 
         // Map List Container (Top Right)
         this.mapListContainer = document.createElement('div');
@@ -277,12 +292,18 @@ export class MapEditor {
             this.mapListEl.appendChild(item);
         });
 
-        // Update Delete Button Visibility
+        // Update UI State based on selection
         const currentMap = this.maps.find(m => m.id === this.activeMapId);
         if (currentMap && !currentMap.isDefault) {
             this.deleteBtn.style.display = 'block';
+            this.saveBtn.style.display = 'block';
+            this.resetBtn.style.display = 'block';
+            this.infoText.style.display = 'none';
         } else {
             this.deleteBtn.style.display = 'none';
+            this.saveBtn.style.display = 'none';
+            this.resetBtn.style.display = 'none';
+            this.infoText.style.display = 'block';
         }
     }
 
@@ -312,6 +333,9 @@ export class MapEditor {
         this.loadMapData(map.data);
         this.updateMapListUI();
         this.showNotification(`Loaded: ${map.name}`);
+        
+        // Ensure game world is updated immediately (fixes reload bug)
+        this.applyChanges();
     }
 
     deleteMap() {
