@@ -206,6 +206,7 @@ export class VehiclePhysics {
             
             // Optional: Keep small kick for initial contact
             // Use absolute speed for kick magnitude calculation
+            /*
             const absSpeed = Math.abs(this.preLandingSpeed);
             if (absSpeed > 5.0) {
                 const rot = this.chassisBody.rotation();
@@ -219,6 +220,7 @@ export class VehiclePhysics {
                 
                 this.chassisBody.applyImpulse({ x: fwd.x * impulseMag, y: 0, z: fwd.z * impulseMag }, true);
             }
+            */
         } else if (this.wasGrounded && !isGrounded) {
             // --- TAKEOFF TRACKING ---
             const pos = this.getPosition();
@@ -277,34 +279,8 @@ export class VehiclePhysics {
             // Force brake to 0 to prevent landing friction slowdown
             brakeForce = 0;
             
-            // Velocity Clamp / Restoration
-            // If we are significantly slower than pre-landing speed, boost us.
-            // Threshold: 10 km/h (~2.7 m/s) to avoid boosting when stopped
-            const preSpeedMag = Math.abs(this.preLandingSpeed);
-            const curSpeedMag = Math.abs(speed); // speed is signed m/s from controller
-
-            if (preSpeedMag > 2.7) {
-                const minMag = preSpeedMag * 0.8;
-                if (curSpeedMag < minMag) {
-                    // We lost too much speed! Apply correction.
-                    const linvel = this.chassisBody.linvel();
-                    const rot = this.chassisBody.rotation();
-                    const q = new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w);
-                    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
-                    
-                    // Restore speed in the original direction
-                    const sign = Math.sign(this.preLandingSpeed);
-                    const targetSpeed = sign * minMag;
-
-                    // New Velocity
-                    const newVel = fwd.clone().multiplyScalar(targetSpeed);
-                    newVel.y = linvel.y; // Keep vertical velocity (gravity/bounce)
-                    
-                    this.chassisBody.setLinvel({ x: newVel.x, y: newVel.y, z: newVel.z }, true);
-                    
-                    console.log(`[LANDING CLAMP] Boosted ${speedKmh.toFixed(1)} -> ${(targetSpeed*3.6).toFixed(1)} km/h`);
-                }
-            }
+            // Velocity Clamp / Restoration REMOVED as per user request
+            // It was causing backward boosts on landing.
         }
 
         // Apply to Rear Wheels (RWD)
@@ -360,5 +336,21 @@ export class VehiclePhysics {
     
     resetTuning() {
         // Reset logic would go here
+    }
+
+    reset() {
+        this.wasGrounded = true;
+        this.landingGraceTimer = 0;
+        this.preLandingSpeed = 0;
+        this.jumpStartPos.set(0, 0, 0);
+        
+        // Reset Controller State if possible (Rapier doesn't expose direct reset, but we can zero inputs)
+        if (this.controller) {
+            for (let i = 0; i < 4; i++) {
+                this.controller.setWheelEngineForce(i, 0);
+                this.controller.setWheelBrake(i, 0);
+                this.controller.setWheelSteering(i, 0);
+            }
+        }
     }
 }

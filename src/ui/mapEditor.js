@@ -43,6 +43,10 @@ export class MapEditor {
         this.initMaps();
     }
 
+    isLocalhost() {
+        return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    }
+
     async initMaps() {
         // 1. Load Default Map
         try {
@@ -103,7 +107,14 @@ export class MapEditor {
             this.coinModel = gltf.scene;
             this.coinModel.scale.set(2, 2, 2);
             this.tuneCoinMaterials(this.coinModel);
+            
+            // Refresh Editor Visuals
             if (this.visuals.length > 0) this.refreshVisuals();
+
+            // If game is running (Editor Closed), update Game World with new assets
+            if (!this.active) {
+                this.applyChanges();
+            }
         }, undefined, (error) => {
             console.error("Error loading Coin Model:", error);
             const geo = new THREE.CylinderGeometry(1, 1, 0.2, 32);
@@ -111,6 +122,11 @@ export class MapEditor {
             const mat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1.0, roughness: 0.3 });
             this.coinModel = new THREE.Mesh(geo, mat);
             this.coinModel.name = "CoinFallback";
+            
+            // Update Game World with fallback
+            if (!this.active) {
+                this.applyChanges();
+            }
         });
     }
 
@@ -294,16 +310,27 @@ export class MapEditor {
 
         // Update UI State based on selection
         const currentMap = this.maps.find(m => m.id === this.activeMapId);
-        if (currentMap && !currentMap.isDefault) {
-            this.deleteBtn.style.display = 'block';
+        const isLocal = this.isLocalhost();
+
+        if (currentMap && (!currentMap.isDefault || isLocal)) {
             this.saveBtn.style.display = 'block';
             this.resetBtn.style.display = 'block';
-            this.infoText.style.display = 'none';
+            
+            // Only show delete for custom maps
+            if (!currentMap.isDefault) {
+                this.deleteBtn.style.display = 'block';
+                this.infoText.style.display = 'none';
+            } else {
+                this.deleteBtn.style.display = 'none';
+                this.infoText.style.display = 'block';
+                this.infoText.innerText = "Editing Default Map (Localhost Mode)";
+            }
         } else {
             this.deleteBtn.style.display = 'none';
             this.saveBtn.style.display = 'none';
             this.resetBtn.style.display = 'none';
             this.infoText.style.display = 'block';
+            this.infoText.innerText = "Default Map is Read-Only. Create a New Map to Edit.";
         }
     }
 
@@ -488,13 +515,14 @@ export class MapEditor {
             const mat = new THREE.MeshBasicMaterial({ color: color });
             const mesh = new THREE.Mesh(geo, mat);
             mesh.position.copy(pos);
+            mesh.visible = this.active; // Only visible if editor is active
             this.game.scene.threeScene.add(mesh);
             this.visuals.push(mesh);
         } else {
             const coin = this.coinModel.clone();
             coin.position.copy(pos);
             coin.position.y += 1.5;
-            coin.visible = true;
+            coin.visible = this.active; // Only visible if editor is active
             this.game.scene.threeScene.add(coin);
             this.visuals.push(coin);
         }
@@ -515,6 +543,7 @@ export class MapEditor {
         const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hex);
         mesh.add(arrowHelper);
 
+        mesh.visible = this.active; // Only visible if editor is active
         this.game.scene.threeScene.add(mesh);
         this.rampVisuals.push(mesh);
     }
@@ -527,6 +556,7 @@ export class MapEditor {
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
         const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
         this.lines = new THREE.Line(geometry, material);
+        this.lines.visible = this.active; // Only visible if editor is active
         this.game.scene.threeScene.add(this.lines);
     }
 
@@ -548,23 +578,55 @@ export class MapEditor {
         if (!currentMap) return;
 
         if (currentMap.isDefault) {
-            // Cannot overwrite default, prompt to create new
-            const name = prompt("Cannot overwrite Default Map. Save as new map?", "My Custom Map");
-            if (name) {
-                const newId = 'map_' + Date.now();
-                const newMap = {
-                    id: newId,
-                    name: name,
-                    data: {
-                        checkpoints: this.checkpoints,
-                        ramps: this.ramps
-                    },
-                    isDefault: false
+            if (this.isLocalhost()) {
+                // Localhost: Save to Server File
+                const data = {
+                    checkpoints: this.checkpoints,
+                    ramps: this.ramps
                 };
-                this.maps.push(newMap);
-                this.saveMapsToStorage();
-                this.selectMap(newId);
-                this.showNotification("Saved as New Map!");
+                const json = JSON.stringify(data, null, 2);
+
+                fetch('/save_map', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: json
+                })
+                .then(response => {
+                    if (response.ok) return response.json();
+                    throw new Error('Server response not ok');
+                })
+                .then(result => {
+                    if (result.status === 'success') {
+                        this.showNotification("Default Map Saved to Server!");
+                        // Also update local memory
+                        currentMap.data = data;
+                    } else {
+                        throw new Error(result.message || 'Unknown server error');
+                    }
+                })
+                .catch(error => {
+                    console.error("Server save failed:", error);
+                    this.showNotification("Error: Server Save Failed.");
+                });
+            } else {
+                // Cannot overwrite default, prompt to create new
+                const name = prompt("Cannot overwrite Default Map. Save as new map?", "My Custom Map");
+                if (name) {
+                    const newId = 'map_' + Date.now();
+                    const newMap = {
+                        id: newId,
+                        name: name,
+                        data: {
+                            checkpoints: this.checkpoints,
+                            ramps: this.ramps
+                        },
+                        isDefault: false
+                    };
+                    this.maps.push(newMap);
+                    this.saveMapsToStorage();
+                    this.selectMap(newId);
+                    this.showNotification("Saved as New Map!");
+                }
             }
         } else {
             // Update Custom Map

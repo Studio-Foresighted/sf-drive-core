@@ -7,7 +7,7 @@ export class LapSystem {
         this.physicsWorld = game.physics.world;
         
         this.totalLaps = 3;
-        this.currentLap = 1;
+        this.currentLap = 0;
         this.nextCheckpoint = 0; // 0 = Start/Finish, 1 = CP1, 2 = CP2
         this.hasStartedRace = false;
         this.lastValidatedCheckpoint = -1; // Track last valid hit to prevent spam
@@ -35,6 +35,12 @@ export class LapSystem {
         this.visuals = []; // Initialize visuals array
         this.particles = []; // For coin explosions
         this.setupSensors();
+
+        // Initial HUD Sync & Debug
+        console.log(`[DEBUG] LapSystem Init: Lap ${this.currentLap}/${this.totalLaps}`);
+        if (this.game.hud) {
+            this.game.hud.updateLap(this.currentLap, this.totalLaps);
+        }
     }
 
     updateCheckpoints(newCheckpoints, coinModel = null) {
@@ -50,11 +56,16 @@ export class LapSystem {
         this.checkpoints = newCheckpoints;
         this.nextCheckpoint = 0;
         this.hasStartedRace = false;
-        this.currentLap = 1;
+        this.currentLap = 0;
         this.collectedCoins.clear();
         
         this.setupSensors(coinModel);
         console.log("LapSystem: Checkpoints updated.", this.checkpoints);
+
+        // Sync HUD
+        if (this.game.hud) {
+            this.game.hud.updateLap(this.currentLap, this.totalLaps);
+        }
     }
 
     setupSensors(coinModel) {
@@ -80,7 +91,8 @@ export class LapSystem {
             // Create Visuals
             if (index > 0 && coinModel) { // Skip Start Line (Index 0)
                 const coin = coinModel.clone();
-                coin.position.set(cp.pos.x, cp.pos.y, cp.pos.z);
+                // Lower the coin visual slightly (approx 0.5 units) to be closer to floor but not touching
+                coin.position.set(cp.pos.x, cp.pos.y - 0.5, cp.pos.z);
                 // Ensure it's visible
                 coin.visible = true;
                 this.game.scene.threeScene.add(coin);

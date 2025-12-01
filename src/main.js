@@ -188,6 +188,9 @@ class Game {
     resetCar(toStart) {
         if (!this.vehicle) return;
 
+        // Reset internal physics state (clears landing boost memory etc)
+        this.vehicle.reset();
+
         const body = this.vehicle.chassisBody;
         
         // 1. Kill all velocity immediately
@@ -205,12 +208,24 @@ class Game {
             // Lift by 3 units to ensure we are clear of any geometry
             body.setTranslation({ x: t.x, y: t.y + 3.0, z: t.z }, true); 
             
-            // Reset rotation to flat (keep Y heading)
+            // Reset rotation to flat (keep heading)
             const currentRot = body.rotation();
-            const euler = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(currentRot.x, currentRot.y, currentRot.z, currentRot.w));
-            const targetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, euler.y, 0));
+            const q = new THREE.Quaternion(currentRot.x, currentRot.y, currentRot.z, currentRot.w);
             
-            body.setRotation({ x: targetQuat.x, y: targetQuat.y, z: targetQuat.z, w: targetQuat.w }, true);
+            // Extract Forward Vector
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+            
+            // Project to horizontal plane (XZ)
+            forward.y = 0;
+            if (forward.lengthSq() > 0.001) {
+                forward.normalize();
+                // Create new rotation looking in that direction
+                const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), forward);
+                body.setRotation({ x: targetQuat.x, y: targetQuat.y, z: targetQuat.z, w: targetQuat.w }, true);
+            } else {
+                // Fallback if perfectly vertical
+                body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+            }
         }
     }
 

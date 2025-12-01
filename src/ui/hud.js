@@ -90,7 +90,7 @@ export class HUD {
             pointer-events: none;
             text-align: center;
         `;
-        this.lapCounter.innerHTML = `LAP <span style="color:#00ffcc">1</span>/3`;
+        this.lapCounter.innerHTML = `LAP <span style="color:#00ffcc">0</span>/3`;
         document.body.appendChild(this.lapCounter);
 
         // Coin Counter (Below Lap Counter)
