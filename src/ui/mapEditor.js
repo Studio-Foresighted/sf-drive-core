@@ -571,6 +571,7 @@ export class MapEditor {
             this.game.scene.threeScene.remove(this.lines);
             this.lines = null;
         }
+        this.applyChanges();
     }
 
     saveMap() {
@@ -670,7 +671,7 @@ export class MapEditor {
     }
 
     applyChanges() {
-        if (this.checkpoints.length >= 2 && this.game.lapSystem) {
+        if (this.game.lapSystem) {
             const newCPs = this.checkpoints.map((p) => ({
                 pos: { x: p.x, y: p.y + 2, z: p.z },
                 size: { x: 10, y: 10, z: 10 }
