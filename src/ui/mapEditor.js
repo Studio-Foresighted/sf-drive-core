@@ -13,6 +13,10 @@ export class MapEditor {
         this.checkpoints = []; // Array of Vector3
         this.ramps = []; // Array of { pos: Vector3, rotation: number }
         
+        // Map Management
+        this.maps = []; // Array of { id, name, data, isDefault }
+        this.activeMapId = 'default';
+        
         // Visuals
         this.visuals = []; // Array of Meshes (Checkpoints)
         this.rampVisuals = []; // Array of Meshes (Ramps)
@@ -27,13 +31,51 @@ export class MapEditor {
         this.rampRotation = 0; // Current rotation in radians
         this.cursor = null; // Visual cursor for checkpoints
         this.rampPreview = null; // Visual cursor for ramps
-        this.defaultY = -2.0; // Default Y for track (Updated based on user request)
-        this.overrideY = true; // Force Y by default to prevent floating ramps
+        this.defaultY = -1.5; // Hardcoded default as requested
+        this.overrideY = true; // Always override Y
 
         this.initCamera();
         this.setupInput();
         this.createCursors();
         this.createNotificationUI();
+        
+        // Initialize Maps
+        this.initMaps();
+    }
+
+    async initMaps() {
+        // 1. Load Default Map
+        try {
+            const response = await fetch('map_data.json');
+            const defaultData = await response.json();
+            this.maps.push({
+                id: 'default',
+                name: 'Default Map',
+                data: defaultData,
+                isDefault: true
+            });
+        } catch (e) {
+            console.error("Failed to load default map:", e);
+            // Create empty default if fetch fails
+            this.maps.push({
+                id: 'default',
+                name: 'Default Map',
+                data: { checkpoints: [], ramps: [] },
+                isDefault: true
+            });
+        }
+
+        // 2. Load Custom Maps from LocalStorage
+        const savedMaps = JSON.parse(localStorage.getItem('race_custom_maps') || '[]');
+        this.maps = [...this.maps, ...savedMaps];
+
+        // 3. Restore Last Active Map or Default
+        const lastMapId = localStorage.getItem('race_last_map_id');
+        if (lastMapId && this.maps.find(m => m.id === lastMapId)) {
+            this.selectMap(lastMapId);
+        } else {
+            this.updateMapListUI();
+        }
     }
 
     createNotificationUI() {
@@ -59,89 +101,57 @@ export class MapEditor {
         const loader = new GLTFLoader();
         loader.load('./assets/models/kr-coin.glb', (gltf) => {
             this.coinModel = gltf.scene;
-            // Scale it appropriately
             this.coinModel.scale.set(2, 2, 2);
-            
-            // Tune Materials
             this.tuneCoinMaterials(this.coinModel);
-
-            console.log("Coin Model Loaded Successfully");
-            
-            // Refresh visuals if any exist
-            if (this.visuals.length > 0) {
-                this.refreshVisuals();
-            }
+            if (this.visuals.length > 0) this.refreshVisuals();
         }, undefined, (error) => {
             console.error("Error loading Coin Model:", error);
-            // Create a fallback placeholder (Gold Cylinder)
             const geo = new THREE.CylinderGeometry(1, 1, 0.2, 32);
-            geo.rotateX(Math.PI / 2); // Face camera
+            geo.rotateX(Math.PI / 2);
             const mat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1.0, roughness: 0.3 });
             this.coinModel = new THREE.Mesh(geo, mat);
             this.coinModel.name = "CoinFallback";
-            console.log("Created Fallback Coin Model");
         });
     }
 
     tuneCoinMaterials(root) {
         root.traverse((child) => {
             if (child.isMesh) {
-                // Ensure we use Standard Material for PBR
                 if (!(child.material instanceof THREE.MeshStandardMaterial)) {
-                    // Convert to Standard if possible, or just create new
                     const oldColor = child.material.color || new THREE.Color(0xffd700);
-                    child.material = new THREE.MeshStandardMaterial({
-                        color: oldColor
-                    });
+                    child.material = new THREE.MeshStandardMaterial({ color: oldColor });
                 }
-                
-                // Lower metalness and adjust roughness as requested
-                child.material.metalness = 0.6; // Reduced to allow more diffuse color
+                child.material.metalness = 0.6;
                 child.material.roughness = 0.3; 
-                
-                // Add Emissive to make it glow/pop
-                child.material.emissive = new THREE.Color(0x443300); // Subtle gold glow
+                child.material.emissive = new THREE.Color(0x443300);
                 child.material.emissiveIntensity = 0.5;
-
-                // Ensure envMap intensity is sufficient if scene has one
                 child.material.envMapIntensity = 1.0;
-                
-                console.log(`Tuned Coin Material: Metalness=${child.material.metalness}, Emissive=${child.material.emissive.getHexString()}`);
             }
         });
     }
 
     refreshVisuals() {
-        // Clear existing visuals
         this.visuals.forEach(m => this.game.scene.threeScene.remove(m));
         this.visuals = [];
-        
-        // Re-add them
-        this.checkpoints.forEach((pos, i) => {
-            this.addCheckpointVisual(pos, i);
-        });
+        this.checkpoints.forEach((pos, i) => this.addCheckpointVisual(pos, i));
     }
 
     createCursors() {
-        // Checkpoint Cursor
         const geo = new THREE.RingGeometry(1, 1.5, 32);
         const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
         this.cursor = new THREE.Mesh(geo, mat);
         this.cursor.rotation.x = -Math.PI / 2;
         this.cursor.visible = false;
 
-        // Ramp Preview Cursor
-        const rampGeo = new THREE.BoxGeometry(10, 2, 15); // Approximate ramp size
+        const rampGeo = new THREE.BoxGeometry(10, 2, 15);
         const rampMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true });
         this.rampPreview = new THREE.Mesh(rampGeo, rampMat);
         this.rampPreview.visible = false;
 
-        // Add Direction Arrow to Ramp Preview
-        // Points along +Z (Forward for the ramp)
         const dir = new THREE.Vector3(0, 0, 1);
-        const origin = new THREE.Vector3(0, 3, 0); // Above the box
+        const origin = new THREE.Vector3(0, 3, 0);
         const length = 8;
-        const hex = 0xff0000; // Red Arrow
+        const hex = 0xff0000;
         const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hex);
         this.rampPreview.add(arrowHelper);
     }
@@ -164,7 +174,6 @@ export class MapEditor {
 
         window.addEventListener('mousedown', (e) => {
             if (!this.active) return;
-            // Shift + Click to place
             if (e.shiftKey && e.button === 0) {
                 this.placeObject();
             }
@@ -206,58 +215,35 @@ export class MapEditor {
         this.modeBtn = this.createButton('Mode: CHECKPOINT', () => this.toggleMode());
         controls.appendChild(this.modeBtn);
 
-        // Y-Axis Control
-        const yContainer = document.createElement('div');
-        yContainer.style.display = 'flex';
-        yContainer.style.alignItems = 'center';
-        yContainer.style.gap = '5px';
-        yContainer.style.color = '#fff';
-        
-        const yLabel = document.createElement('span');
-        yLabel.innerText = 'Y:';
-        
-        this.yInput = document.createElement('input');
-        this.yInput.type = 'number';
-        this.yInput.value = this.defaultY;
-        this.yInput.step = '0.1';
-        this.yInput.style.width = '60px';
-        this.yInput.style.background = '#333';
-        this.yInput.style.color = '#fff';
-        this.yInput.style.border = '1px solid #666';
-        
-        // Use oninput for immediate update
-        this.yInput.oninput = (e) => {
-            this.defaultY = parseFloat(e.target.value);
-            this.overrideY = true;
-            this.yCheckbox.checked = true;
-            this.yInput.style.color = '#fff';
-        };
-
-        // Checkbox to toggle override
-        this.yCheckbox = document.createElement('input');
-        this.yCheckbox.type = 'checkbox';
-        this.yCheckbox.checked = this.overrideY;
-        this.yCheckbox.title = "Force Y Height";
-        this.yCheckbox.onchange = (e) => {
-            this.overrideY = e.target.checked;
-            if (this.overrideY) {
-                this.yInput.style.color = '#fff';
-                this.showNotification(`Y-Axis Forced: ${this.defaultY}`);
-            } else {
-                this.yInput.style.color = '#888';
-                this.showNotification("Y-Axis: Auto (Raycast)");
-            }
-        };
-
-        yContainer.appendChild(yLabel);
-        yContainer.appendChild(this.yInput);
-        yContainer.appendChild(this.yCheckbox);
-        controls.appendChild(yContainer);
-
-        // Save/Load/Reset
+        // Save/Delete/Reset
         controls.appendChild(this.createButton('SAVE', () => this.saveMap()));
-        controls.appendChild(this.createButton('LOAD', () => this.loadMap()));
+        this.deleteBtn = this.createButton('DELETE', () => this.deleteMap());
+        this.deleteBtn.style.display = 'none'; // Hidden by default (for Default map)
+        controls.appendChild(this.deleteBtn);
         controls.appendChild(this.createButton('RESET', () => this.resetMap()));
+
+        // Map List Container (Top Right)
+        this.mapListContainer = document.createElement('div');
+        this.mapListContainer.style.cssText = `
+            display: none; position: fixed; top: 20px; right: 20px; width: 200px;
+            background: rgba(0,0,0,0.9); padding: 10px; border-radius: 10px;
+            border: 1px solid #444; z-index: 1000; font-family: monospace;
+        `;
+        
+        const listHeader = document.createElement('div');
+        listHeader.style.cssText = 'color: #fff; font-weight: bold; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;';
+        listHeader.innerHTML = '<span>MAPS</span>';
+        
+        const addBtn = document.createElement('button');
+        addBtn.innerText = '+';
+        addBtn.style.cssText = 'background: #00aa00; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-weight: bold;';
+        addBtn.onclick = () => this.addNewMap();
+        listHeader.appendChild(addBtn);
+        
+        this.mapListContainer.appendChild(listHeader);
+        
+        this.mapListEl = document.createElement('div');
+        this.mapListContainer.appendChild(this.mapListEl);
 
         // Exit Button
         this.closeBtn = document.createElement('button');
@@ -270,14 +256,80 @@ export class MapEditor {
         this.closeBtn.onclick = () => this.toggle();
 
         document.body.appendChild(this.uiOverlay);
-        // Hidden file input for uploads
-        this.fileInput = document.createElement('input');
-        this.fileInput.type = 'file';
-        this.fileInput.accept = '.json,application/json';
-        this.fileInput.style.display = 'none';
-        this.fileInput.onchange = (e) => this.handleFileUpload(e);
-        document.body.appendChild(this.fileInput);
+        document.body.appendChild(this.mapListContainer);
         document.body.appendChild(this.closeBtn);
+    }
+
+    updateMapListUI() {
+        this.mapListEl.innerHTML = '';
+        
+        this.maps.forEach(map => {
+            const item = document.createElement('div');
+            const isActive = map.id === this.activeMapId;
+            item.style.cssText = `
+                padding: 8px; margin-bottom: 5px; cursor: pointer;
+                background: ${isActive ? '#f1c40f' : '#333'};
+                color: ${isActive ? '#000' : '#ccc'};
+                border-radius: 4px; font-size: 0.9rem;
+            `;
+            item.innerText = map.name + (map.isDefault ? ' (Def)' : '');
+            item.onclick = () => this.selectMap(map.id);
+            this.mapListEl.appendChild(item);
+        });
+
+        // Update Delete Button Visibility
+        const currentMap = this.maps.find(m => m.id === this.activeMapId);
+        if (currentMap && !currentMap.isDefault) {
+            this.deleteBtn.style.display = 'block';
+        } else {
+            this.deleteBtn.style.display = 'none';
+        }
+    }
+
+    addNewMap() {
+        const name = prompt("Enter new map name:", "My Custom Map");
+        if (!name) return;
+        
+        const newId = 'map_' + Date.now();
+        const newMap = {
+            id: newId,
+            name: name,
+            data: { checkpoints: [], ramps: [] }, // Start empty
+            isDefault: false
+        };
+        
+        this.maps.push(newMap);
+        this.saveMapsToStorage();
+        this.selectMap(newId);
+    }
+
+    selectMap(id) {
+        const map = this.maps.find(m => m.id === id);
+        if (!map) return;
+        
+        this.activeMapId = id;
+        localStorage.setItem('race_last_map_id', id);
+        this.loadMapData(map.data);
+        this.updateMapListUI();
+        this.showNotification(`Loaded: ${map.name}`);
+    }
+
+    deleteMap() {
+        const map = this.maps.find(m => m.id === this.activeMapId);
+        if (!map || map.isDefault) return;
+        
+        if (!confirm(`Delete map "${map.name}"?`)) return;
+        
+        this.maps = this.maps.filter(m => m.id !== this.activeMapId);
+        this.saveMapsToStorage();
+        
+        // Select Default
+        this.selectMap('default');
+    }
+
+    saveMapsToStorage() {
+        const customMaps = this.maps.filter(m => !m.isDefault);
+        localStorage.setItem('race_custom_maps', JSON.stringify(customMaps));
     }
 
     createButton(text, onClick) {
@@ -300,7 +352,6 @@ export class MapEditor {
         const deg = 20;
         const rad = deg * (Math.PI / 180);
         this.rampRotation += rad; 
-        // Normalize to 0..2PI
         this.rampRotation = this.rampRotation % (Math.PI * 2);
         
         if (this.rampPreview) {
@@ -311,47 +362,42 @@ export class MapEditor {
 
     toggle() {
         this.active = !this.active;
+        const garageUI = document.getElementById('garage-ui');
         
         if (this.active) {
             console.log("MAP EDITOR: ACTIVE.");
             this.game.paused = true;
             if (this.game.pauseMenu) this.game.pauseMenu.uiContainer.style.display = 'none';
+            if (garageUI) garageUI.style.display = 'none'; // Hide Car Select
             
             this.uiOverlay.style.display = 'block';
+            this.mapListContainer.style.display = 'block';
             this.closeBtn.style.display = 'block';
             
             this.game.scene.threeScene.add(this.cursor);
             this.game.scene.threeScene.add(this.rampPreview);
             
-            // Show Editor Visuals
             this.visuals.forEach(m => m.visible = true);
             this.rampVisuals.forEach(m => m.visible = true);
             if (this.lines) this.lines.visible = true;
 
-            // Try to load existing map if empty
+            // If we have no data loaded yet, try loading active map
             if (this.checkpoints.length === 0 && this.ramps.length === 0) {
-                this.loadMap(true); // Silent load
+                this.selectMap(this.activeMapId);
             }
 
         } else {
             console.log("MAP EDITOR: CLOSED.");
             this.game.paused = false;
+            if (garageUI) garageUI.style.display = 'block'; // Show Car Select
             
             this.uiOverlay.style.display = 'none';
+            this.mapListContainer.style.display = 'none';
             this.closeBtn.style.display = 'none';
             
             this.game.scene.threeScene.remove(this.cursor);
             this.game.scene.threeScene.remove(this.rampPreview);
 
-            // Remove Editor Visuals so we don't have duplicates
-            // The real physics objects will be created by applyChanges()
-            this.visuals.forEach(m => this.game.scene.threeScene.remove(m));
-            this.rampVisuals.forEach(m => this.game.scene.threeScene.remove(m));
-            // Note: We keep the data in this.visuals/rampVisuals so we can restore them when opening editor again
-            // But wait, if we remove them from scene, we need to add them back when opening.
-            // Actually, let's just clear the arrays and rebuild them on open? 
-            // Or just hide them?
-            // Hiding is safer.
             this.visuals.forEach(m => m.visible = false);
             this.rampVisuals.forEach(m => m.visible = false);
             if (this.lines) this.lines.visible = false;
@@ -368,33 +414,22 @@ export class MapEditor {
         let hitFound = false;
 
         if (intersects.length > 0) {
-            // Filter intersects to find ground/track
             let hit = null;
             for (let i = 0; i < intersects.length; i++) {
                 const h = intersects[i];
-                
-                // Ignore high objects (like skybox or weird artifacts)
                 if (h.point.y > 50) continue;
-                
-                // Ignore objects that are likely sensors (invisible)
                 if (h.object.visible === false) continue;
-
-                // Ignore Helper objects
                 if (h.object.type === 'GridHelper' || h.object.type === 'AxesHelper') continue;
-
                 hit = h;
                 break;
             }
-
             if (hit) {
                 pos.copy(hit.point);
                 hitFound = true;
             }
         }
 
-        // If no hit, but we have manual Y, we can project mouse to that plane
         if (!hitFound && this.overrideY) {
-            // Raycast against a mathematical plane at Y = defaultY
             const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -this.defaultY);
             const target = new THREE.Vector3();
             this.raycaster.ray.intersectPlane(plane, target);
@@ -404,37 +439,26 @@ export class MapEditor {
             }
         }
 
-        if (!hitFound) {
-            console.log("No valid ground hit found.");
-            return;
-        }
+        if (!hitFound) return;
 
-        // Apply Manual Y Override if enabled
         if (this.overrideY) {
-            console.log(`Overriding Y: Was ${pos.y.toFixed(2)}, Now ${this.defaultY}`);
             pos.y = this.defaultY;
         }
-
-        console.log("Placing at:", pos);
 
         if (this.mode === 'CHECKPOINT') {
             this.checkpoints.push(pos.clone());
             this.addCheckpointVisual(pos, this.checkpoints.length - 1);
             this.updateLines();
-            console.log(`Added Checkpoint ${this.checkpoints.length}`);
         } else if (this.mode === 'RAMP') {
             const rampData = { pos: pos.clone(), rotation: this.rampRotation };
             this.ramps.push(rampData);
             this.addRampVisual(rampData);
-            console.log(`Added Ramp at ${pos.y.toFixed(2)}`);
         }
     }
 
     addCheckpointVisual(pos, index) {
         const isStart = (index === 0);
-        
         if (isStart || !this.coinModel) {
-            // Start Line or Fallback: Sphere
             const color = isStart ? 0x00ff00 : 0xffff00;
             const geo = new THREE.SphereGeometry(2, 16, 16);
             const mat = new THREE.MeshBasicMaterial({ color: color });
@@ -443,39 +467,27 @@ export class MapEditor {
             this.game.scene.threeScene.add(mesh);
             this.visuals.push(mesh);
         } else {
-            // Coin Model
             const coin = this.coinModel.clone();
             coin.position.copy(pos);
-            coin.position.y += 1.5; // Lowered from 2.0 to 1.5 for easier collection
-            
-            // Ensure it's visible
+            coin.position.y += 1.5;
             coin.visible = true;
-            
             this.game.scene.threeScene.add(coin);
             this.visuals.push(coin);
         }
     }
 
     addRampVisual(data) {
-        // Visual representation of placed ramp
         const geo = new THREE.BoxGeometry(10, 2, 15);
         const mat = new THREE.MeshStandardMaterial({ color: 0xff00ff });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.copy(data.pos);
-        
-        // Apply Slope and Rotation (YXZ order)
         const slope = -0.4;
         mesh.rotation.set(slope, data.rotation, 0, 'YXZ');
         
-        // Lift slightly to sit on ground
-        // Removed +1 offset to lower it further as requested
-        // mesh.position.y += 1; 
-        
-        // Add Arrow Helper to visualize direction
         const dir = new THREE.Vector3(0, 0, 1);
         const origin = new THREE.Vector3(0, 3, 0);
         const length = 8;
-        const hex = 0xffff00; // Yellow Arrow
+        const hex = 0xffff00;
         const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hex);
         mesh.add(arrowHelper);
 
@@ -484,9 +496,7 @@ export class MapEditor {
     }
 
     updateLines() {
-        if (this.lines) {
-            this.game.scene.threeScene.remove(this.lines);
-        }
+        if (this.lines) this.game.scene.threeScene.remove(this.lines);
         if (this.checkpoints.length < 2) return;
 
         const points = [...this.checkpoints, this.checkpoints[0]];
@@ -498,104 +508,56 @@ export class MapEditor {
 
     resetMap() {
         if (!confirm("Clear all checkpoints and ramps?")) return;
-        
-        // Clear Data
         this.checkpoints = [];
         this.ramps = [];
-        
-        // Clear Visuals
-        this.visuals.forEach(m => this.game.scene.threeScene.remove(m));
-        this.visuals = [];
-        
+        this.refreshVisuals();
         this.rampVisuals.forEach(m => this.game.scene.threeScene.remove(m));
         this.rampVisuals = [];
-
         if (this.lines) {
             this.game.scene.threeScene.remove(this.lines);
             this.lines = null;
         }
-        
-        console.log("Map Reset.");
     }
 
     saveMap() {
-        const data = {
-            checkpoints: this.checkpoints,
-            ramps: this.ramps
-        };
-        const json = JSON.stringify(data, null, 2);
-        
-        // Always save to LocalStorage as backup
-        localStorage.setItem('race_game_map', json);
-        
-        // 1. Try Saving to Server (Local Python Server)
-        fetch('/save_map', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: json
-        })
-        .then(response => {
-            if (response.ok) return response.json();
-            throw new Error('Server response not ok');
-        })
-        .then(result => {
-            if (result.status === 'success') {
-                this.showNotification("Map Saved to Server!");
-                console.log("Map saved to server successfully.");
-            } else {
-                throw new Error(result.message || 'Unknown server error');
+        const currentMap = this.maps.find(m => m.id === this.activeMapId);
+        if (!currentMap) return;
+
+        if (currentMap.isDefault) {
+            // Cannot overwrite default, prompt to create new
+            const name = prompt("Cannot overwrite Default Map. Save as new map?", "My Custom Map");
+            if (name) {
+                const newId = 'map_' + Date.now();
+                const newMap = {
+                    id: newId,
+                    name: name,
+                    data: {
+                        checkpoints: this.checkpoints,
+                        ramps: this.ramps
+                    },
+                    isDefault: false
+                };
+                this.maps.push(newMap);
+                this.saveMapsToStorage();
+                this.selectMap(newId);
+                this.showNotification("Saved as New Map!");
             }
-        })
-        .catch(error => {
-            console.warn("Server save failed (likely offline or static host). Falling back to download.", error);
-            
-            // 2. Fallback: Download File (Netlify / No Server)
-            this.downloadMapFile(json);
-            this.showNotification("Server Offline. Downloading File...");
-        });
-    }
-
-    downloadMapFile(jsonString) {
-        try {
-            const blob = new Blob([jsonString], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'race_map.json';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        } catch (e) {
-            console.error("File download failed:", e);
-            this.showNotification("Error: Could not download file.");
+        } else {
+            // Update Custom Map
+            currentMap.data = {
+                checkpoints: this.checkpoints,
+                ramps: this.ramps
+            };
+            this.saveMapsToStorage();
+            this.showNotification("Map Saved!");
         }
     }
 
-    loadMap(silent = false) {
-        const json = localStorage.getItem('race_game_map');
-        if (!json) {
-            if (!silent) this.showNotification("No saved map found.");
-            return;
-        }
-
-        try {
-            this.loadFromJSON(json, silent);
-        } catch (e) {
-            console.error("Failed to load map:", e);
-            if (!silent) this.showNotification("Error loading map.");
-        }
-    }
-
-    // Load map from a JSON string (used by localStorage or file upload)
-    loadFromJSON(jsonString, silent = false) {
-        const data = JSON.parse(jsonString);
-
+    loadMapData(data) {
         // Clear current
         this.checkpoints = [];
         this.ramps = [];
-        this.visuals.forEach(m => this.game.scene.threeScene.remove(m));
-        this.visuals = [];
+        this.refreshVisuals();
         this.rampVisuals.forEach(m => this.game.scene.threeScene.remove(m));
         this.rampVisuals = [];
         if (this.lines) this.game.scene.threeScene.remove(this.lines);
@@ -619,64 +581,17 @@ export class MapEditor {
                 this.addRampVisual(rampData);
             });
         }
-
-        if (!silent) this.showNotification("Map Loaded Successfully.");
-    }
-
-    // Trigger a file download of the current map JSON (works on Netlify/static hosts)
-    downloadMap() {
-        const data = {
-            checkpoints: this.checkpoints,
-            ramps: this.ramps
-        };
-        const json = JSON.stringify(data, null, 2);
-        const blob = new Blob([json], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const now = new Date();
-        const ts = now.toISOString().replace(/[:.]/g, '-');
-        a.download = `race_map_${ts}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        this.showNotification('Map downloaded to your machine.');
-    }
-
-    // Handle a user-selected JSON file and load it into the editor
-    handleFileUpload(e) {
-        const file = e.target.files && e.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-            try {
-                const content = evt.target.result;
-                this.loadFromJSON(content, false);
-            } catch (err) {
-                console.error('Failed to parse uploaded map:', err);
-                this.showNotification('Invalid map file.');
-            } finally {
-                // reset input so the same file can be re-selected if needed
-                this.fileInput.value = '';
-            }
-        };
-        reader.readAsText(file);
     }
 
     applyChanges() {
-        // 1. Apply Checkpoints to LapSystem
         if (this.checkpoints.length >= 2 && this.game.lapSystem) {
             const newCPs = this.checkpoints.map((p) => ({
                 pos: { x: p.x, y: p.y + 2, z: p.z },
-                size: { x: 10, y: 10, z: 10 } // Reduced size for tighter collection
+                size: { x: 10, y: 10, z: 10 }
             }));
-            // Pass the coin model so LapSystem can create gameplay visuals
             this.game.lapSystem.updateCheckpoints(newCPs, this.coinModel);
         }
 
-        // 2. Apply Ramps to Scene (Physics)
         if (this.game.scene && this.game.scene.createRamp) {
             if (this.game.scene.clearRamps) {
                 this.game.scene.clearRamps();
