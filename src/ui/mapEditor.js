@@ -523,14 +523,41 @@ export class MapEditor {
             checkpoints: this.checkpoints,
             ramps: this.ramps
         };
-        const json = JSON.stringify(data);
+        const json = JSON.stringify(data, null, 2);
         
-        // Save to LocalStorage
+        // Always save to LocalStorage as backup
         localStorage.setItem('race_game_map', json);
         
-        // Download to Local File
+        // 1. Try Saving to Server (Local Python Server)
+        fetch('/save_map', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: json
+        })
+        .then(response => {
+            if (response.ok) return response.json();
+            throw new Error('Server response not ok');
+        })
+        .then(result => {
+            if (result.status === 'success') {
+                this.showNotification("Map Saved to Server!");
+                console.log("Map saved to server successfully.");
+            } else {
+                throw new Error(result.message || 'Unknown server error');
+            }
+        })
+        .catch(error => {
+            console.warn("Server save failed (likely offline or static host). Falling back to download.", error);
+            
+            // 2. Fallback: Download File (Netlify / No Server)
+            this.downloadMapFile(json);
+            this.showNotification("Server Offline. Downloading File...");
+        });
+    }
+
+    downloadMapFile(jsonString) {
         try {
-            const blob = new Blob([json], { type: 'application/json' });
+            const blob = new Blob([jsonString], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -539,11 +566,9 @@ export class MapEditor {
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            
-            this.showNotification("Map Saved (Browser & File)");
         } catch (e) {
             console.error("File download failed:", e);
-            this.showNotification("Saved to Browser Storage Only");
+            this.showNotification("Error: Could not download file.");
         }
     }
 
